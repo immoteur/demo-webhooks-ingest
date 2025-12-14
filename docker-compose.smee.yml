@@ -1,0 +1,42 @@
+services:
+  smee-classified-notification:
+    build:
+      context: .
+    container_name: webhooks_ingest_smee_classified_notification
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SMEE_SOURCE_URL: ${SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION:-}
+      SMEE_TARGET_URL: http://api:3000/webhooks/classified-notification
+    command: node scripts/smee-relay.mjs
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+  smee-classifieds-export:
+    build:
+      context: .
+    container_name: webhooks_ingest_smee_classifieds_export
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SMEE_SOURCE_URL: ${SMEE_SOURCE_URL_CLASSIFIEDS_EXPORT:-}
+      SMEE_TARGET_URL: http://api:3000/webhooks/classifieds-export
+    command: node scripts/smee-relay.mjs
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

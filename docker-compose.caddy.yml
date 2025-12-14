@@ -1,0 +1,38 @@
+services:
+  postgres:
+    ports: []
+
+  api:
+    environment:
+      NODE_ENV: production
+      WEBHOOK_ALLOWED_IP: ${WEBHOOK_ALLOWED_IP:-}
+    ports: []
+
+  metabase:
+    ports: []
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: webhooks_ingest_caddy
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+      metabase:
+        condition: service_started
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env}
+      METABASE_DOMAIN: ${METABASE_DOMAIN:?Set METABASE_DOMAIN in .env}
+      METABASE_PUBLIC_DASHBOARD_UUID: ${METABASE_PUBLIC_DASHBOARD_UUID:-}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

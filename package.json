@@ -1,0 +1,57 @@
+{
+  "name": "webhooks-ingest-demo",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "openapi:sync": "node scripts/openapi-sync.mjs",
+    "codegen": "node scripts/openapi-codegen.mjs",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.44.5",
+    "express": "^5.2.1",
+    "ipaddr.js": "^2.2.0",
+    "pg": "^8.16.3",
+    "pino": "^9.11.0",
+    "pino-http": "^10.5.0",
+    "smee-client": "^5.0.0",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.19.0",
+    "@testcontainers/postgresql": "^11.6.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.10.7",
+    "@types/pg": "^8.15.5",
+    "@types/supertest": "^6.0.2",
+    "drizzle-kit": "^0.31.4",
+    "eslint": "^9.19.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^16.5.0",
+    "openapi-zod-client": "^1.18.3",
+    "prettier": "^3.4.2",
+    "supertest": "^7.1.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.22.0",
+    "vitest": "^2.1.9",
+    "yaml": "^2.8.0"
+  }
+}

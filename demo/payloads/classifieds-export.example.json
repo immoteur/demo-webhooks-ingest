@@ -1,0 +1,95 @@
+{
+  "exportId": "2f9b734d-9c22-46a0-8f20-0d1a2b3c4d5e",
+  "items": [
+    {
+      "id": "7f6e3b4d-9c22-46a0-8f20-0d1a2b3c4d5e",
+      "propertyId": "01920347-45c7-7b81-a2e4-d28c43f0d123",
+      "type": "created",
+      "currency": "euro",
+      "squareUnit": "squareMeter",
+      "status": {
+        "current": "available"
+      },
+      "meta": {
+        "firstSeenAt": "2025-09-15T08:10:00Z",
+        "lastModifiedAt": "2025-09-15T09:00:00Z",
+        "lastSeenAt": "2025-09-15T09:00:00Z",
+        "removedAt": null
+      },
+      "source": {
+        "domain": "seloger.com",
+        "url": "https://www.seloger.com/annonces/achat/appartement/paris-1er-75/5-pieces/0.htm"
+      },
+      "publisher": {
+        "isProfessional": true,
+        "type": "agency",
+        "id": "2c2a42a0-1a9b-4b18-9f1d-1f9b2a3c4d5e",
+        "email": "contact@agence-paris.fr",
+        "phone": "+33123456789",
+        "feesUrl": "https://www.agence-paris.fr/honoraires",
+        "siren": "123456789",
+        "siret": "12345678900011"
+      },
+      "location": {
+        "city": {
+          "name": "Paris",
+          "inseeCode": "75056"
+        },
+        "country": "france",
+        "department": "75",
+        "postcode": "75001",
+        "latitude": 48.8606,
+        "longitude": 2.3376
+      },
+      "media": {
+        "images": [
+          {
+            "id": "8f8f0c4e-1bca-48d5-98bb-8ab2c0c0ab12",
+            "position": 1,
+            "url": "https://images.immoteur.com/sample/apt-paris-1.jpg"
+          }
+        ]
+      },
+      "property": {
+        "type": "apartment",
+        "area": 50,
+        "roomCount": 3,
+        "bedroomCount": 2,
+        "elevatorExists": true,
+        "terraceExists": true
+      },
+      "transaction": {
+        "type": "sale",
+        "price": {
+          "current": 650000,
+          "history": [
+            {
+              "id": "4d4744d6-d7f1-4f8b-8c3c-fb8a1e3c0f8a",
+              "value": 650000,
+              "timestamp": "2025-09-15T09:00:00Z"
+            }
+          ],
+          "initial": 650000,
+          "perSquareUnit": 13000
+        }
+      },
+      "energy": {
+        "dpe": {
+          "date": "2023-05-10",
+          "label": "d",
+          "value": 180
+        },
+        "ges": {
+          "date": "2023-05-10",
+          "label": "e",
+          "value": 45
+        },
+        "heating": {
+          "source": "gas",
+          "system": "radiator",
+          "type": "individual"
+        }
+      }
+    }
+  ]
+}

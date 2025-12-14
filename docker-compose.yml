@@ -1,0 +1,126 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: webhooks_ingest_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-webhooks_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      API_DB_USER: ${API_DB_USER:-api_writer}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-CHANGE_ME}
+      METABASE_READER_USER: ${METABASE_READER_USER:-metabase_reader}
+      METABASE_READER_PASSWORD: ${METABASE_READER_PASSWORD:-CHANGE_ME}
+    ports:
+      - '${POSTGRES_BIND_IP:-127.0.0.1}:${POSTGRES_HOST_PORT:-15432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-webhooks_ingest}']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+    container_name: webhooks_ingest_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://${API_DB_USER:-api_writer}:${API_DB_PASSWORD:-CHANGE_ME}@postgres:5432/${POSTGRES_DB:-webhooks_ingest}
+      PORT: 3000
+      LOG_LEVEL: ${LOG_LEVEL:-}
+      WEBHOOK_ALLOWED_IP: ${WEBHOOK_ALLOWED_IP:-}
+      WEBHOOK_EVENTS_RETENTION_HOURS: ${WEBHOOK_EVENTS_RETENTION_HOURS:-24}
+      CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS: ${CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS:-7}
+    ports:
+      - '${API_BIND_IP:-127.0.0.1}:${API_HOST_PORT:-8080}:3000'
+    command: sh -c "node dist/db/migrate.js && node dist/index.js"
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://localhost:3000/health'').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  metabase:
+    image: metabase/metabase:v0.57.6
+    container_name: webhooks_ingest_metabase
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+    ports:
+      - '${METABASE_BIND_IP:-127.0.0.1}:${METABASE_HOST_PORT:-3001}:3000'
+    volumes:
+      - metabase_data:/metabase-data
+
+  db-bootstrap:
+    image: postgres:16-alpine
+    container_name: webhooks_ingest_db_bootstrap
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-webhooks_ingest}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      API_DB_USER: ${API_DB_USER:-api_writer}
+      API_DB_PASSWORD: ${API_DB_PASSWORD:-CHANGE_ME}
+      METABASE_READER_USER: ${METABASE_READER_USER:-metabase_reader}
+      METABASE_READER_PASSWORD: ${METABASE_READER_PASSWORD:-CHANGE_ME}
+    volumes:
+      - ./scripts/db-bootstrap.sh:/scripts/db-bootstrap.sh:ro
+    command: sh /scripts/db-bootstrap.sh
+    restart: 'no'
+
+  metabase-bootstrap:
+    image: node:20-alpine
+    container_name: webhooks_ingest_metabase_bootstrap
+    depends_on:
+      metabase:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    environment:
+      METABASE_URL: http://metabase:3000
+      METABASE_SITE_NAME: ${METABASE_SITE_NAME:-Webhook Ingest Demo}
+      METABASE_ADMIN_EMAIL: ${METABASE_ADMIN_EMAIL:-demo@example.com}
+      METABASE_ADMIN_PASSWORD: ${METABASE_ADMIN_PASSWORD:-DemoAdmin!2025ChangeMe}
+      POSTGRES_DB: ${POSTGRES_DB:-webhooks_ingest}
+      METABASE_READER_USER: ${METABASE_READER_USER:-metabase_reader}
+      METABASE_READER_PASSWORD: ${METABASE_READER_PASSWORD:-CHANGE_ME}
+    volumes:
+      - ./scripts/metabase-bootstrap.mjs:/scripts/metabase-bootstrap.mjs:ro
+    command: node /scripts/metabase-bootstrap.mjs
+    restart: 'no'
+
+volumes:
+  postgres_data:
+  metabase_data:
