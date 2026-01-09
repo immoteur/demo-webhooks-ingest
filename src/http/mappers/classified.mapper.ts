@@ -1,8 +1,4 @@
-import type {
-  Classified,
-  MediaImage,
-  TransactionPriceHistoryEntry,
-} from '../../generated/schemas.js';
+import type { Classified, MediaImage, TransactionPriceHistoryEntry } from '@immoteur/openapi-zod';
 import type {
   ClassifiedImageRowInsert,
   ClassifiedPriceHistoryRowInsert,

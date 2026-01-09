@@ -38,8 +38,6 @@ make install
 cp .env.example .env
 make db-up
 make db-migrate
-make openapi-sync
-make codegen
 make dev
 ```
 
@@ -53,7 +51,7 @@ Before running in any shared environment, update the default credentials in
 - `src/http/routes.ts`: mounts all controllers in one place
 - `src/http/controllers/*`: Express routers (one file per controller)
 - `src/http/mappers/*`: HTTP payload → persistence DTO mapping
-- `src/generated/schemas.ts`: OpenAPI-derived Zod schemas + TypeScript types
+- `@immoteur/openapi-zod`: OpenAPI-derived Zod schemas + TypeScript types (payload validation)
 - `src/modules/webhooks/*`: webhook ingestion + `webhook_events` persistence
 - `src/modules/classifieds/*`: `classifieds` mapping + persistence (incl. images + price history)
 - `src/db/*`: Drizzle schema, migrations, client
@@ -162,11 +160,11 @@ If you’re running the API directly (no Docker), use `http://localhost:3000` in
 
 Migrations live in `src/db/migrations/`.
 
-## OpenAPI codegen
+## OpenAPI schemas/types
 
-- `openapi.yaml` is synced from `https://api.immoteur.com/assets/openapi-v1.yaml` via `make openapi-sync` (override with `OPENAPI_URL=...`).
-- `openapi.codegen.yaml` is derived at codegen-time by converting top-level `webhooks` into regular `paths` under `/webhooks/...` so codegen can run (do not hand-edit).
-- `openapi-zod-client` generates `src/generated/schemas.ts` (do not hand-edit); rerun `make codegen`.
+This demo validates webhook payloads using `@immoteur/openapi-zod` (Zod schemas + TypeScript types generated from the Immoteur OpenAPI spec).
+
+To update schemas/types, bump `@immoteur/openapi-zod` in `package.json` and reinstall.
 
 ## Adding a new webhook handler
 
@@ -177,11 +175,10 @@ This demo is intentionally limited to classifieds webhooks:
 
 To add another webhook:
 
-1. Update upstream spec, then `make openapi-sync`.
-2. Update `ALLOWED_WEBHOOK_KEYS` in `scripts/openapi-codegen.mjs`, then `make codegen`.
-3. Create a controller in `src/http/controllers/` (e.g. `webhooks.<name>.controller.ts`) using the generated schema + `ingestWebhook`.
-4. Register it in `src/http/routes.ts`.
-5. Add/update tests in `tests/webhooks.test.ts`.
+1. Ensure `@immoteur/openapi-zod` contains the payload schema for the new webhook (update/publish it if needed), then bump the dependency in this repo.
+2. Create a controller in `src/http/controllers/` (e.g. `webhooks.<name>.controller.ts`) using the imported schema + `ingestWebhook`.
+3. Register it in `src/http/routes.ts`.
+4. Add/update tests in `tests/webhooks.test.ts`.
 
 ## Security
 

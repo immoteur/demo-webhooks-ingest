@@ -1,17 +1,16 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { Express } from 'express';
-import type { Pool } from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import YAML from 'yaml';
 
+import type { Classified, ClassifiedsExport } from '@immoteur/openapi-zod';
+
+import type * as DbClient from '../src/db/client.js';
 import {
   classifiedImages,
   classifiedPriceHistory,
@@ -19,54 +18,103 @@ import {
   webhookEvents,
 } from '../src/db/schema.js';
 
-type JsonObject = Record<string, unknown>;
+type ClassifiedNotificationWebhookPayload = Classified & { type: string };
+type Db = typeof DbClient.db;
+type DbPool = typeof DbClient.pool;
 
-type ClassifiedNotificationImage = JsonObject & {
-  id?: string;
-  position?: number;
-  url?: string;
-  averageHash?: string | null;
-  differenceHash?: string | null;
-  perceptualHash?: string | null;
+type CodedError = {
+  code?: string;
+  cause?: CodedError;
 };
 
-type ClassifiedNotificationPriceHistoryEntry = JsonObject & {
-  timestamp?: string;
-  value?: number;
+const classifiedNotificationExample: ClassifiedNotificationWebhookPayload = {
+  id: '7f6e3b4d-9c22-46a0-8f20-0d1a2b3c4d5e',
+  propertyId: '01920347-45c7-7b81-a2e4-d28c43f0d123',
+  type: 'created',
+  currency: 'euro',
+  squareUnit: 'squareMeter',
+  status: {
+    current: 'available',
+  },
+  meta: {
+    firstSeenAt: '2025-09-15T08:10:00Z',
+    lastModifiedAt: '2025-09-15T09:00:00Z',
+    lastSeenAt: '2025-09-15T09:00:00Z',
+    removedAt: null,
+  },
+  source: {
+    domain: 'seloger.com',
+    url: 'https://www.seloger.com/annonces/achat/appartement/paris-1er-75/5-pieces/0.htm',
+  },
+  publisher: {
+    isProfessional: true,
+    type: 'agency',
+    email: 'contact@agence-paris.fr',
+    phone: '+33123456789',
+    feesUrl: 'https://www.agence-paris.fr/honoraires',
+    siren: '123456789',
+    siret: '12345678900011',
+  },
+  location: {
+    city: {
+      name: 'Paris',
+      inseeCode: '75056',
+    },
+    country: 'france',
+    department: '75',
+    postcode: '75001',
+    latitude: 48.8606,
+    longitude: 2.3376,
+  },
+  media: {
+    images: [
+      {
+        id: '8f8f0c4e-1bca-48d5-98bb-8ab2c0c0ab12',
+        position: 1,
+        url: 'https://images.immoteur.com/sample/apt-paris-1.jpg',
+      },
+    ],
+  },
+  property: {
+    type: 'apartment',
+    area: 50,
+    roomCount: 3,
+    bedroomCount: 2,
+    elevatorExists: true,
+    terraceExists: true,
+  },
+  transaction: {
+    type: 'sale',
+    price: {
+      current: 650000,
+      initial: 650000,
+      perSquareUnit: 13000,
+      history: [
+        {
+          id: '4d4744d6-d7f1-4f8b-8c3c-fb8a1e3c0f8a',
+          value: 650000,
+          timestamp: '2025-09-15T09:00:00Z',
+        },
+      ],
+    },
+  },
 };
 
-type ClassifiedNotificationPayload = JsonObject & {
-  id: string;
-  type?: string;
-  meta?: JsonObject & {
-    firstSeenAt?: string;
-    lastModifiedAt?: string;
-    lastSeenAt?: string;
-    removedAt?: string | null;
-  };
-  media?: JsonObject & {
-    images?: ClassifiedNotificationImage[];
-  };
-  transaction?: JsonObject & {
-    price?: JsonObject & {
-      current?: number;
-      history?: ClassifiedNotificationPriceHistoryEntry[];
-    };
-  };
+const classifiedsExportExample: ClassifiedsExport = {
+  exportId: '2f9b734d-9c22-46a0-8f20-0d1a2b3c4d5e',
+  items: [classifiedNotificationExample],
 };
 
-function getPgErrorCode(err: unknown): string | undefined {
-  let current: unknown = err;
+function getPgErrorCode(err: CodedError | null | undefined): string | undefined {
+  let current = err;
 
   for (let i = 0; i < 5; i += 1) {
-    if (!current || typeof current !== 'object') return undefined;
+    if (!current) return undefined;
 
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === 'string') return code;
+    if (typeof current.code === 'string') return current.code;
 
-    const cause = (current as { cause?: unknown }).cause;
-    if (!cause || cause === current) return undefined;
-    current = cause;
+    if (!current.cause || current.cause === current) return undefined;
+    current = current.cause;
   }
 
   return undefined;
@@ -75,10 +123,8 @@ function getPgErrorCode(err: unknown): string | undefined {
 describe('webhook ingestion', () => {
   let container: StartedPostgreSqlContainer;
   let app: Express;
-  let db: NodePgDatabase;
-  let pool: Pool;
-  let classifiedNotificationExample: Record<string, unknown>;
-  let classifiedsExportExample: Record<string, unknown>;
+  let db: Db;
+  let pool: DbPool;
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:16-alpine')
@@ -90,35 +136,13 @@ describe('webhook ingestion', () => {
     process.env.DATABASE_URL = container.getConnectionUri();
 
     const client = await import('../src/db/client.js');
-    db = client.db as unknown as NodePgDatabase;
-    pool = client.pool as unknown as Pool;
+    db = client.db;
+    pool = client.pool;
 
     await migrate(db, { migrationsFolder: path.join(process.cwd(), 'src', 'db', 'migrations') });
 
     const { createApp } = await import('../src/server.js');
     app = createApp();
-
-    const openapiYaml = await readFile(path.join(process.cwd(), 'openapi.yaml'), 'utf8');
-    const openapi = YAML.parse(openapiYaml);
-    const example =
-      openapi?.webhooks?.['classified-notification']?.post?.requestBody?.content?.[
-        'application/json'
-      ]?.example;
-
-    if (!example || typeof example !== 'object') {
-      throw new Error('Missing OpenAPI example for webhooks.classified-notification');
-    }
-
-    classifiedNotificationExample = example as Record<string, unknown>;
-
-    const exportExample =
-      openapi?.webhooks?.['classifieds']?.post?.requestBody?.content?.['application/json']?.example;
-
-    if (!exportExample || typeof exportExample !== 'object') {
-      throw new Error('Missing OpenAPI example for webhooks.classifieds');
-    }
-
-    classifiedsExportExample = exportExample as Record<string, unknown>;
   });
 
   beforeEach(async () => {
@@ -177,24 +201,17 @@ describe('webhook ingestion', () => {
     const row = rows[0]!;
     expect(row.eventType).toBe('classified-notification');
     expect(row.error).toBeNull();
-    expect((row.payload as Record<string, unknown>).id).toBe(classifiedNotificationExample.id);
-    expect((row.payload as Record<string, unknown>).type).toBe(classifiedNotificationExample.type);
+    const payload = row.payload as { id?: string; type?: string };
+    expect(payload.id).toBe(classifiedNotificationExample.id);
+    expect(payload.type).toBe(classifiedNotificationExample.type);
     expect(row.bodySha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('upserts a classifieds row with flattened columns', async () => {
     // Given
-    const id = classifiedNotificationExample.id as string;
-    const exampleImages =
-      ((classifiedNotificationExample.media as { images?: unknown } | undefined)?.images as
-        | unknown[]
-        | undefined) ?? [];
-    const examplePriceHistory =
-      ((
-        (classifiedNotificationExample.transaction as { price?: unknown } | undefined)?.price as
-          | { history?: unknown }
-          | undefined
-      )?.history as unknown[] | undefined) ?? [];
+    const id = classifiedNotificationExample.id;
+    const exampleImages = classifiedNotificationExample.media?.images ?? [];
+    const examplePriceHistory = classifiedNotificationExample.transaction.price.history;
 
     // When
     const res = await request(app)
@@ -238,9 +255,8 @@ describe('webhook ingestion', () => {
 
   it('stores a classifieds export webhook and upserts all items', async () => {
     // Given
-    const items = (classifiedsExportExample.items as unknown[]) ?? [];
-    const firstItem = (items[0] as { id?: unknown } | undefined) ?? {};
-    const firstItemId = firstItem.id as string;
+    const items = classifiedsExportExample.items;
+    const firstItemId = items[0]?.id;
 
     // When
     const res = await request(app)
@@ -419,50 +435,41 @@ describe('webhook ingestion', () => {
 
   it('replaces images and price history on subsequent notifications', async () => {
     // Given
-    const id = classifiedNotificationExample.id as string;
+    const id = classifiedNotificationExample.id;
 
-    const payload1 = structuredClone(
-      classifiedNotificationExample,
-    ) as ClassifiedNotificationPayload;
-    const payload2 = structuredClone(
-      classifiedNotificationExample,
-    ) as ClassifiedNotificationPayload;
+    const payload1 = structuredClone(classifiedNotificationExample);
+    const payload2 = structuredClone(classifiedNotificationExample);
 
     const originalImageId = payload1.media?.images?.[0]?.id;
-    const originalHistoryTimestamp = payload1.transaction?.price?.history?.[0]?.timestamp;
+    const originalHistoryTimestamp = payload1.transaction.price.history[0]?.timestamp;
 
-    const media2 = (payload2.media ?? {}) as NonNullable<ClassifiedNotificationPayload['media']>;
-    media2.images = [
-      {
-        ...(payload1.media?.images?.[0] ?? {}),
-        id: '11111111-1111-1111-8111-111111111111',
-        position: 1,
-        url: 'https://example.com/new.jpg',
-      },
-    ];
-    payload2.media = media2;
+    const baseImage = payload1.media?.images?.[0];
+    payload2.media = {
+      images: [
+        {
+          ...(baseImage ?? {
+            id: '11111111-1111-1111-8111-111111111111',
+            position: 1,
+            url: 'https://example.com/new.jpg',
+          }),
+          id: '11111111-1111-1111-8111-111111111111',
+          position: 1,
+          url: 'https://example.com/new.jpg',
+        },
+      ],
+    };
 
-    const transaction2 = (payload2.transaction ?? {}) as NonNullable<
-      ClassifiedNotificationPayload['transaction']
-    >;
-    const price2 = (transaction2.price ?? {}) as NonNullable<
-      NonNullable<ClassifiedNotificationPayload['transaction']>['price']
-    >;
-    price2.current = 640000;
-    price2.history = [
+    payload2.transaction.price.current = 640000;
+    payload2.transaction.price.history = [
       {
-        ...(payload1.transaction?.price?.history?.[0] ?? {}),
+        ...payload1.transaction.price.history[0]!,
         timestamp: '2025-09-16T09:00:00Z',
         value: 640000,
       },
     ];
-    transaction2.price = price2;
-    payload2.transaction = transaction2;
 
-    const meta2 = (payload2.meta ?? {}) as NonNullable<ClassifiedNotificationPayload['meta']>;
-    meta2.lastModifiedAt = '2025-09-16T09:00:00Z';
-    meta2.lastSeenAt = '2025-09-16T09:00:00Z';
-    payload2.meta = meta2;
+    payload2.meta.lastModifiedAt = '2025-09-16T09:00:00Z';
+    payload2.meta.lastSeenAt = '2025-09-16T09:00:00Z';
 
     // When
     const res1 = await request(app)
@@ -532,7 +539,7 @@ describe('webhook ingestion', () => {
         differenceHash: null,
         perceptualHash: null,
       });
-    } catch (err) {
+    } catch (err: CodedError) {
       imagesErrorCode = getPgErrorCode(err);
     }
 
@@ -543,7 +550,7 @@ describe('webhook ingestion', () => {
         timestamp: new Date('2025-09-15T09:00:00Z'),
         value: 650000,
       });
-    } catch (err) {
+    } catch (err: CodedError) {
       priceHistoryErrorCode = getPgErrorCode(err);
     }
 

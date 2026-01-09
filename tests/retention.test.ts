@@ -2,16 +2,18 @@ import path from 'node:path';
 
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import type { Pool } from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type * as DbClient from '../src/db/client.js';
 import { classifieds, webhookEvents } from '../src/db/schema.js';
+
+type Db = typeof DbClient.db;
+type DbPool = typeof DbClient.pool;
 
 describe('retention job', () => {
   let container: StartedPostgreSqlContainer;
-  let db: NodePgDatabase;
-  let pool: Pool;
+  let db: Db;
+  let pool: DbPool;
   let runRetentionOnce: (options?: { now?: Date }) => Promise<{
     deletedWebhookEvents: number;
     deletedClassifieds: number;
@@ -29,8 +31,8 @@ describe('retention job', () => {
     process.env.CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS = '7';
 
     const client = await import('../src/db/client.js');
-    db = client.db as unknown as NodePgDatabase;
-    pool = client.pool as unknown as Pool;
+    db = client.db;
+    pool = client.pool;
 
     await migrate(db, { migrationsFolder: path.join(process.cwd(), 'src', 'db', 'migrations') });
 

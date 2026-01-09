@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint';
 
 export default [
   {
-    ignores: ['dist/**', 'src/db/migrations/**', 'src/generated/**', 'openapi.codegen.yaml'],
+    ignores: ['dist/**', 'src/db/migrations/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

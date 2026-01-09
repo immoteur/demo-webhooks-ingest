@@ -1,5 +1,5 @@
 .PHONY: help install ensure-deps dev build start lint format format-check test test-watch check demo demo-with-seed \
-	openapi-sync codegen db-up db-down db-logs db-migrate db-generate db-studio \
+	db-up db-down db-logs db-migrate db-generate db-studio \
 	stack-up stack-up-smee stack-down stack-down-smee stack-reset stack-reset-smee reset reset-smee \
 	metabase-rebootstrap stack-logs stack-logs-smee
 
@@ -17,8 +17,6 @@ help:
 	@echo "  check           Run all local checks"
 	@echo "  demo            One-command live demo (no seed)"
 	@echo "  demo-with-seed  Demo + seed sample data"
-	@echo "  openapi-sync    Download/sync openapi.yaml"
-	@echo "  codegen         Generate OpenAPI-derived code"
 	@echo "  db-up           Start local Postgres (docker compose)"
 	@echo "  db-down         Stop local Postgres"
 	@echo "  db-logs         Tail local Postgres logs"
@@ -105,12 +103,6 @@ demo-with-seed: ## Demo + seed sample data
 		fi; \
 	fi
 	node scripts/seed-demo.mjs
-
-openapi-sync: ensure-deps
-	pnpm openapi:sync
-
-codegen: ensure-deps
-	pnpm codegen
 
 db-up:
 	docker compose up -d postgres

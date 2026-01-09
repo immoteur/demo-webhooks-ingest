@@ -1,8 +1,9 @@
 import express, { type Request, type Response, Router } from 'express';
 import type { z } from 'zod';
 
+import { ClassifiedsExport as s_ClassifiedsExport } from '@immoteur/openapi-zod';
+
 import { mapClassifiedToUpsertDto } from '../mappers/classified.mapper.js';
-import { ClassifiedsExport as s_ClassifiedsExport } from '../../generated/schemas.js';
 import { upsertClassifieds } from '../../modules/classifieds/classified.repository.js';
 import { ingestWebhook } from '../../modules/webhooks/webhook-ingest.service.js';
 

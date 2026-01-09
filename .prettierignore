@@ -2,7 +2,3 @@ dist
 node_modules
 pnpm-lock.yaml
 migrations
-openapi.codegen.yaml
-openapi.yaml
-src/generated
-scripts/openapi-zod-client.schemas.hbs
