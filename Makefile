@@ -5,6 +5,7 @@
 
 help:
 	@echo "Targets:"
+	@echo "  .env            Create .env from .env.example (if missing)"
 	@echo "  install         Install dependencies (pnpm)"
 	@echo "  dev             Start API in watch mode"
 	@echo "  build           Build TypeScript -> dist/"
@@ -38,11 +39,13 @@ help:
 install:
 	corepack enable
 	pnpm install
+.env:
+	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
 
 ensure-deps:
 	@if [ ! -x node_modules/.bin/tsx ]; then $(MAKE) install; fi
 
-dev: ensure-deps
+dev: ensure-deps .env
 	pnpm dev
 
 build: ensure-deps
@@ -72,9 +75,8 @@ check:
 	pnpm test
 	pnpm build
 
-demo: ## Start stack + two smee relays (no seeding)
+demo: .env ## Start stack + two smee relays (no seeding)
 	@bash scripts/check-prereqs.sh
-	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
 	node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
 	@MB_BOOTSTRAP_ID=$$(docker compose ps --all -q metabase-bootstrap); \
@@ -88,9 +90,8 @@ demo: ## Start stack + two smee relays (no seeding)
 	fi
 	node scripts/demo-info.mjs
 
-demo-with-seed: ## Demo + seed sample data
+demo-with-seed: .env ## Demo + seed sample data
 	@bash scripts/check-prereqs.sh
-	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
 	node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
 	@MB_BOOTSTRAP_ID=$$(docker compose ps --all -q metabase-bootstrap); \
