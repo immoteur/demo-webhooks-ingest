@@ -75,7 +75,7 @@ check:
 	pnpm test
 	pnpm build
 
-demo: .env ## Start stack + two smee relays (no seeding)
+demo: ensure-deps .env ## Start stack + two smee relays (no seeding)
 	@bash scripts/check-prereqs.sh
 	node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
@@ -90,7 +90,7 @@ demo: .env ## Start stack + two smee relays (no seeding)
 	fi
 	node scripts/demo-info.mjs
 
-demo-with-seed: .env ## Demo + seed sample data
+demo-with-seed: ensure-deps .env ## Demo + seed sample data
 	@bash scripts/check-prereqs.sh
 	node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
