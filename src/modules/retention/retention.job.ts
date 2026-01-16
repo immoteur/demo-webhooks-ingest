@@ -12,10 +12,23 @@ export async function runRetentionOnce(options?: { now?: Date }): Promise<{
 }> {
   const now = options?.now ?? new Date();
 
-  const deletedClassifieds = await deleteOldClassifieds(now);
-  const deletedWebhookEvents = await deleteOldWebhookEvents(now);
+  const [deletedClassifieds, deletedWebhookEvents] = await Promise.all([
+    (async () => {
+      const deleted = await deleteOldClassifieds(now);
+      const pruned = await pruneClassifiedsToMaxRows();
+      return deleted + pruned;
+    })(),
+    (async () => {
+      const deleted = await deleteOldWebhookEvents(now);
+      const pruned = await pruneWebhookEventsToMaxRows();
+      return deleted + pruned;
+    })(),
+  ]);
 
-  return { deletedWebhookEvents, deletedClassifieds };
+  return {
+    deletedWebhookEvents,
+    deletedClassifieds,
+  };
 }
 
 export function startRetentionJob(options?: { intervalMs?: number }): { stop: () => void } {
@@ -76,6 +89,53 @@ async function deleteOldWebhookEvents(now: Date): Promise<number> {
           FROM "classifieds" c
           WHERE c."last_webhook_event_id" = we."id"
         )
+      RETURNING 1
+    )
+    SELECT count(*)::int AS deleted FROM deleted
+  `);
+
+  return result.rows[0]?.deleted ?? 0;
+}
+
+async function pruneClassifiedsToMaxRows(): Promise<number> {
+  if (env.CLASSIFIEDS_MAX_ROWS <= 0) return 0;
+
+  const result = await db.execute<{ deleted: number }>(sql`
+    WITH victims AS (
+      SELECT c."id"
+      FROM "classifieds" c
+      ORDER BY c."last_received_at" DESC, c."id" DESC
+      OFFSET ${env.CLASSIFIEDS_MAX_ROWS}
+    ),
+    deleted AS (
+      DELETE FROM "classifieds" c
+      WHERE c."id" IN (SELECT "id" FROM victims)
+      RETURNING 1
+    )
+    SELECT count(*)::int AS deleted FROM deleted
+  `);
+
+  return result.rows[0]?.deleted ?? 0;
+}
+
+async function pruneWebhookEventsToMaxRows(): Promise<number> {
+  if (env.WEBHOOK_EVENTS_MAX_ROWS <= 0) return 0;
+
+  const result = await db.execute<{ deleted: number }>(sql`
+    WITH victims AS (
+      SELECT we."id"
+      FROM "webhook_events" we
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "classifieds" c
+        WHERE c."last_webhook_event_id" = we."id"
+      )
+      ORDER BY we."received_at" DESC, we."id" DESC
+      OFFSET ${env.WEBHOOK_EVENTS_MAX_ROWS}
+    ),
+    deleted AS (
+      DELETE FROM "webhook_events" we
+      WHERE we."id" IN (SELECT "id" FROM victims)
       RETURNING 1
     )
     SELECT count(*)::int AS deleted FROM deleted

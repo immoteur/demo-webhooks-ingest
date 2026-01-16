@@ -15,9 +15,17 @@ const envSchema = z.object({
     emptyStringToUndefined,
     z.coerce.number().int().nonnegative().default(24),
   ),
+  WEBHOOK_EVENTS_MAX_ROWS: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce.number().int().nonnegative().default(0),
+  ),
   CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS: z.preprocess(
     emptyStringToUndefined,
     z.coerce.number().int().nonnegative().default(7),
+  ),
+  CLASSIFIEDS_MAX_ROWS: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce.number().int().nonnegative().default(0),
   ),
 });
 

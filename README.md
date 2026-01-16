@@ -99,6 +99,7 @@ This repo includes a simple Caddy reverse-proxy setup (`docker-compose.caddy.yml
    - `ACME_EMAIL`, `API_DOMAIN`, `METABASE_DOMAIN`
    - Optional: `WEBHOOK_ALLOWED_IP` (single IP/CIDR) to enable the API’s `/webhooks/*` IP allowlist
    - Optional: `WEBHOOK_EVENTS_RETENTION_HOURS` (default `24`) and `CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS` (default `7`) for hourly retention cleanup
+   - Optional: `WEBHOOK_EVENTS_MAX_ROWS` and `CLASSIFIEDS_MAX_ROWS` (default `0`, disabled) to cap row counts to the newest data (webhook events only prune unreferenced rows)
 3. Start the production stack:
 
 ```bash

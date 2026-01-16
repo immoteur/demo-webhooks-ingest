@@ -11,5 +11,6 @@ CREATE TABLE "webhook_events" (
 );
 --> statement-breakpoint
 CREATE INDEX "webhook_events_received_at_idx" ON "webhook_events" USING btree ("received_at");--> statement-breakpoint
+CREATE INDEX "webhook_events_received_at_id_idx" ON "webhook_events" USING btree ("received_at","id");--> statement-breakpoint
 CREATE INDEX "webhook_events_event_type_idx" ON "webhook_events" USING btree ("event_type");--> statement-breakpoint
 CREATE INDEX "webhook_events_received_at_event_type_idx" ON "webhook_events" USING btree ("received_at","event_type");

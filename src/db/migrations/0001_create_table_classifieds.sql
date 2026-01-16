@@ -94,6 +94,7 @@ CREATE INDEX "classifieds_property_id_idx" ON "classifieds" USING btree ("proper
 CREATE INDEX "classifieds_status_current_idx" ON "classifieds" USING btree ("status_current");--> statement-breakpoint
 CREATE INDEX "classifieds_location_department_idx" ON "classifieds" USING btree ("location_department");--> statement-breakpoint
 CREATE INDEX "classifieds_last_received_at_idx" ON "classifieds" USING btree ("last_received_at");--> statement-breakpoint
+CREATE INDEX "classifieds_last_received_at_id_idx" ON "classifieds" USING btree ("last_received_at","id");--> statement-breakpoint
 CREATE INDEX "classifieds_meta_last_seen_at_idx" ON "classifieds" USING btree ("meta_last_seen_at");--> statement-breakpoint
 CREATE INDEX "classifieds_last_webhook_event_id_idx" ON "classifieds" USING btree ("last_webhook_event_id");--> statement-breakpoint
 CREATE INDEX "classifieds_property_type_transaction_type_idx" ON "classifieds" USING btree ("property_type","transaction_type");--> statement-breakpoint

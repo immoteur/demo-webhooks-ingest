@@ -27,6 +27,7 @@ export const webhookEvents = pgTable(
   },
   (table) => ({
     receivedAtIdx: index('webhook_events_received_at_idx').on(table.receivedAt),
+    receivedAtIdIdx: index('webhook_events_received_at_id_idx').on(table.receivedAt, table.id),
     eventTypeIdx: index('webhook_events_event_type_idx').on(table.eventType),
     receivedAtEventTypeIdx: index('webhook_events_received_at_event_type_idx').on(
       table.receivedAt,
@@ -147,6 +148,10 @@ export const classifieds = pgTable(
       table.locationDepartment,
     ),
     lastReceivedAtIdx: index('classifieds_last_received_at_idx').on(table.lastReceivedAt),
+    lastReceivedAtIdIdx: index('classifieds_last_received_at_id_idx').on(
+      table.lastReceivedAt,
+      table.id,
+    ),
     metaLastSeenAtIdx: index('classifieds_meta_last_seen_at_idx').on(table.metaLastSeenAt),
     lastWebhookEventIdIdx: index('classifieds_last_webhook_event_id_idx').on(
       table.lastWebhookEventId,
