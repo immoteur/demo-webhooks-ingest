@@ -18,14 +18,12 @@ if ! docker info >/dev/null 2>&1; then
   fail "Docker daemon is not running (start Docker Desktop / system service)"
 fi
 
-if ! command -v node >/dev/null 2>&1; then
-  fail "Missing \`node\` (Node.js 20+ required)"
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE="${SCRIPT_DIR}/../bin/node"
 
-NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
+NODE_MAJOR="$("${NODE}" -p "process.versions.node.split('.')[0]" 2>/dev/null || true)"
 if [[ -z "${NODE_MAJOR}" || "${NODE_MAJOR}" -lt 20 ]]; then
-  fail "Node.js 20+ required (found: $(node -v 2>/dev/null || echo 'unknown'))"
+  fail "Node.js 20+ required (found: $("${NODE}" -v 2>/dev/null || echo 'unknown'))"
 fi
 
 echo "[preflight] OK"
-

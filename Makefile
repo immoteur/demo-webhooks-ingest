@@ -37,8 +37,7 @@ help:
 	@echo "  stack-logs-smee Tail stack logs (+2 smee relays)"
 
 install:
-	corepack enable
-	pnpm install
+	./bin/pnpm install
 .env:
 	@if [ ! -f .env ]; then cp .env.example .env; echo "Created .env from .env.example"; fi
 
@@ -46,38 +45,38 @@ ensure-deps:
 	@if [ ! -x node_modules/.bin/tsx ]; then $(MAKE) install; fi
 
 dev: ensure-deps .env
-	pnpm dev
+	./bin/pnpm dev
 
 build: ensure-deps
-	pnpm build
+	./bin/pnpm build
 
 start: ensure-deps
-	pnpm start
+	./bin/pnpm start
 
 lint: ensure-deps
-	pnpm lint
+	./bin/pnpm lint
 
 format: ensure-deps
-	pnpm format
+	./bin/pnpm format
 
 format-check: ensure-deps
-	pnpm format:check
+	./bin/pnpm format:check
 
 test: ensure-deps
-	pnpm test
+	./bin/pnpm test
 
 test-watch: ensure-deps
-	pnpm test:watch
+	./bin/pnpm test:watch
 
 check:
-	pnpm format:check
-	pnpm lint
-	pnpm test
-	pnpm build
+	./bin/pnpm format:check
+	./bin/pnpm lint
+	./bin/pnpm test
+	./bin/pnpm build
 
 demo: ensure-deps .env ## Start stack + two smee relays (no seeding)
 	@bash scripts/check-prereqs.sh
-	node scripts/smee-ensure.mjs
+	./bin/node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
 	@MB_BOOTSTRAP_ID=$$(docker compose ps --all -q metabase-bootstrap); \
 	if [ -n "$$MB_BOOTSTRAP_ID" ]; then \
@@ -88,11 +87,11 @@ demo: ensure-deps .env ## Start stack + two smee relays (no seeding)
 			exit $$MB_EXIT; \
 		fi; \
 	fi
-	node scripts/demo-info.mjs
+	./bin/node scripts/demo-info.mjs
 
 demo-with-seed: ensure-deps .env ## Demo + seed sample data
 	@bash scripts/check-prereqs.sh
-	node scripts/smee-ensure.mjs
+	./bin/node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
 	@MB_BOOTSTRAP_ID=$$(docker compose ps --all -q metabase-bootstrap); \
 	if [ -n "$$MB_BOOTSTRAP_ID" ]; then \
@@ -103,7 +102,7 @@ demo-with-seed: ensure-deps .env ## Demo + seed sample data
 			exit $$MB_EXIT; \
 		fi; \
 	fi
-	node scripts/seed-demo.mjs
+	./bin/node scripts/seed-demo.mjs
 
 db-up:
 	docker compose up -d postgres
@@ -115,13 +114,13 @@ db-logs:
 	docker compose logs -f postgres
 
 db-generate: ensure-deps
-	@if [ -n "$(NAME)" ]; then pnpm db:generate --name "$(NAME)"; else pnpm db:generate; fi
+	@if [ -n "$(NAME)" ]; then ./bin/pnpm db:generate --name "$(NAME)"; else ./bin/pnpm db:generate; fi
 
 db-migrate: ensure-deps
-	pnpm db:migrate
+	./bin/pnpm db:migrate
 
 db-studio: ensure-deps
-	pnpm db:studio
+	./bin/pnpm db:studio
 
 stack-up:
 	docker compose up -d --build postgres api metabase db-bootstrap metabase-bootstrap
