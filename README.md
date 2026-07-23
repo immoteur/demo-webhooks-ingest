@@ -9,7 +9,7 @@ This repo is a companion project for:
 
 ## Requirements
 
-- Node.js 20+
+- Node.js 24+
 - Docker + Docker Compose
 - `corepack` (bundled with Node) to run `pnpm`
 
