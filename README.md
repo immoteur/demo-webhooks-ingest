@@ -1,4 +1,5 @@
 # Webhook Ingestion API (Demo)
+<!-- immoteur-runtime: node=24 -->
 
 Demo Node.js (TypeScript) webhook ingestion API that persists webhook events to PostgreSQL (Drizzle ORM + managed migrations), optimized for Metabase to read directly from the DB.
 
