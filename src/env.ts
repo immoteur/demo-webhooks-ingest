@@ -19,6 +19,14 @@ const envSchema = z.object({
     emptyStringToUndefined,
     z.coerce.number().int().nonnegative().default(0),
   ),
+  WEBHOOK_PAYLOAD_RETENTION_MAX_BYTES: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(8 * 1024 * 1024 * 1024),
+  ),
   CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS: z.preprocess(
     emptyStringToUndefined,
     z.coerce.number().int().nonnegative().default(7),
