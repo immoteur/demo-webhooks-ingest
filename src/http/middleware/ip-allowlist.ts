@@ -4,17 +4,25 @@ import ipaddr from 'ipaddr.js';
 type ParsedAddr = ReturnType<typeof ipaddr.parse>;
 
 export function ipAllowList(allowedIp: string | undefined) {
-  if (!allowedIp) {
+  if (!allowedIp?.trim()) {
     return (_req: Request, _res: Response, next: NextFunction) => next();
   }
 
-  const allowed = parseAllowed(allowedIp);
+  const allowed = allowedIp.split(',').map((entry, index) => {
+    try {
+      return parseAllowed(entry);
+    } catch {
+      throw new Error(`WEBHOOK_ALLOWED_IP contains an invalid entry at position ${index + 1}`);
+    }
+  });
 
   return (req: Request, res: Response, next: NextFunction) => {
     const ip = normalizeIp(req.ip ?? '');
     const remoteAddress = normalizeIp(req.socket.remoteAddress ?? '');
 
-    if (isAllowed(allowed, ip) || isAllowed(allowed, remoteAddress)) return next();
+    if (allowed.some((entry) => isAllowed(entry, ip) || isAllowed(entry, remoteAddress))) {
+      return next();
+    }
 
     res.status(403).json({ ok: false });
   };
@@ -30,6 +38,7 @@ type Allowed =
 
 function parseAllowed(input: string): Allowed {
   const trimmed = input.trim();
+  if (!trimmed) throw new Error('Empty allowlist entry');
   if (trimmed.includes('/')) {
     const [addr, prefix] = ipaddr.parseCIDR(trimmed);
     return { kind: 'cidr', addr, prefix };
@@ -47,6 +56,7 @@ function isAllowed(allowed: Allowed, ip: string): boolean {
     return parsed.toString() === allowed.addr.toString();
   }
 
+  if (parsed.kind() !== allowed.addr.kind()) return false;
   return parsed.match(allowed.addr, allowed.prefix);
 }
 

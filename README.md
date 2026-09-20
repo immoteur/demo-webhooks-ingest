@@ -99,7 +99,7 @@ This repo includes a simple Caddy reverse-proxy setup (`docker-compose.caddy.yml
 2. Create `.env` from `.env.example` and set at least:
    - `POSTGRES_PASSWORD`, `API_DB_PASSWORD`, `METABASE_READER_PASSWORD`, `METABASE_ADMIN_PASSWORD`
    - `ACME_EMAIL`, `API_DOMAIN`, `METABASE_DOMAIN`
-   - Optional: `WEBHOOK_ALLOWED_IP` (single IP/CIDR) to enable the API’s `/webhooks/*` IP allowlist
+   - Optional: `WEBHOOK_ALLOWED_IP` to enable the API's `/webhooks/*` IP allowlist
    - Optional: `CLASSIFIEDS_EXPORT_STORAGE_MODE` controls `POST /webhooks/classifieds-export` storage. `persist` is the default and stores export payloads and listings for the local demo and Metabase. `metadata-only` validates and acknowledges exports without storing their payloads or materializing listings; see [Export storage mode](#export-storage-mode).
    - Optional: `WEBHOOK_EVENTS_RETENTION_HOURS` (default `24`) and `CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS` (default `7`) for hourly retention cleanup
    - Optional: `WEBHOOK_EVENTS_MAX_ROWS` and `CLASSIFIEDS_MAX_ROWS` (default `0`, disabled) to retain only the newest rows. Webhook-event cleanup only removes rows that are no longer referenced by a listing.
@@ -147,7 +147,17 @@ The existing retention variables are complementary safeguards:
 
 ### IP allowlist
 
-If `WEBHOOK_ALLOWED_IP` is set (single IP), requests to `/webhooks/*` are rejected with `403` unless they come from that IP.
+Set `WEBHOOK_ALLOWED_IP` to allow requests to `/webhooks/*` from specific source
+addresses. Use a comma-separated list of exact IPv4 or IPv6 addresses and CIDR
+blocks, for example `203.0.113.10,2001:db8::/32`.
+
+Whitespace around entries is ignored. Every entry must be valid; an empty entry
+or invalid address prevents the API from starting and reports a
+`WEBHOOK_ALLOWED_IP` configuration error. Leave the variable unset or blank to
+disable the filter for a standalone deployment.
+
+The allowlist does not apply to `/health`. A webhook request from an unlisted
+source receives `403` with `{ "ok": false }`.
 
 ### Example request
 

@@ -577,6 +577,72 @@ describe('webhook ingestion', () => {
     expect(rows[0]!.bodySha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it('accepts both webhook routes from each listed egress source in metadata-only mode', async () => {
+    // Given
+    const { createApp } = await import('../src/server.js');
+    const allowedApp = createApp({
+      webhookAllowedIp: '192.0.2.10, 198.51.100.20',
+      classifiedsExportStorageMode: 'metadata-only',
+    });
+    allowedApp.set('trust proxy', 1);
+
+    // When
+    const responses = [];
+    for (const sourceIp of ['192.0.2.10', '198.51.100.20']) {
+      responses.push(
+        await request(allowedApp)
+          .post('/webhooks/classified-notification')
+          .set('X-Forwarded-For', sourceIp)
+          .send(classifiedNotificationExample),
+      );
+      responses.push(
+        await request(allowedApp)
+          .post('/webhooks/classifieds-export')
+          .set('X-Forwarded-For', sourceIp)
+          .send(classifiedsExportExample),
+      );
+    }
+
+    // Then
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200]);
+    const rows = await db.select().from(webhookEvents);
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((row) => row.eventType === 'classified-notification')).toHaveLength(2);
+    expect(rows.filter((row) => row.eventType === 'classifieds-export')).toHaveLength(2);
+    expect(
+      rows
+        .filter((row) => row.eventType === 'classifieds-export')
+        .every((row) => row.payload === null),
+    ).toBe(true);
+  });
+
+  it('blocks unlisted sources on both routes without a receipt while health stays public', async () => {
+    // Given
+    const { createApp } = await import('../src/server.js');
+    const blockedApp = createApp({ webhookAllowedIp: '192.0.2.10,198.51.100.20' });
+    blockedApp.set('trust proxy', 1);
+
+    // When
+    const notification = await request(blockedApp)
+      .post('/webhooks/classified-notification')
+      .set('X-Forwarded-For', '192.0.2.10, 203.0.113.30')
+      .send(classifiedNotificationExample);
+    const exported = await request(blockedApp)
+      .post('/webhooks/classifieds-export')
+      .set('X-Forwarded-For', '203.0.113.30')
+      .send(classifiedsExportExample);
+    const health = await request(blockedApp).get('/health');
+
+    // Then
+    expect(notification.status).toBe(403);
+    expect(notification.body).toEqual({ ok: false });
+    expect(exported.status).toBe(403);
+    expect(exported.body).toEqual({ ok: false });
+    expect(health.status).toBe(200);
+    await expect(db.select().from(webhookEvents)).resolves.toHaveLength(0);
+    await expect(db.select().from(classifieds)).resolves.toHaveLength(0);
+  });
+
   it('stores multiple events for the same classified id', async () => {
     // Given
     const id = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
