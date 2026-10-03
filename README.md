@@ -25,7 +25,7 @@ Run `make help` to see all targets.
 make demo
 ```
 
-This starts Postgres + API + Metabase via Docker Compose, bootstraps Metabase on first run, generates **two smee relays** (one per webhook endpoint), and prints URLs/credentials (including a **public Metabase dashboard URL** that works without logging in).
+This starts Postgres + API + Metabase via Docker Compose, bootstraps Metabase on first run, generates **three smee relays** (one per webhook endpoint), and prints URLs/credentials (including a **public Metabase dashboard URL** that works without logging in).
 
 To also seed sample data:
 
@@ -71,7 +71,7 @@ This starts:
 cp .env.example .env
 make stack-up
 
-# Optional: enable the 2 smee relays
+# Optional: enable the 3 smee relays
 node scripts/smee-ensure.mjs
 make stack-up-smee
 ```
@@ -80,6 +80,7 @@ Defaults:
 
 - smee targets (inside Compose network):
   - classified-notification → `http://api:3000/webhooks/classified-notification`
+  - classified-notification-batch → `http://api:3000/webhooks/classified-notification-batch`
   - classifieds-export → `http://api:3000/webhooks/classifieds-export`
 - API: `http://localhost:8080`
 - Metabase UI: `http://localhost:3001`
@@ -122,12 +123,25 @@ Notes:
 
 ## Webhook endpoints
 
-This service exposes **reliable** ingestion endpoints under:
+This service exposes these webhook endpoints:
 
-- `POST /webhooks/classified-notification`
-- `POST /webhooks/classifieds-export`
+| Immoteur delivery mode | Canonical route                                 | Retained direct route                    |
+| ---------------------- | ----------------------------------------------- | ---------------------------------------- |
+| Single notifications   | `POST /webhooks/classified-notification-single` | `POST /webhooks/classified-notification` |
+| Batch notifications    | `POST /webhooks/classified-notification-batch`  | —                                        |
+| Exports                | `POST /webhooks/classified-export`              | `POST /webhooks/classifieds-export`      |
 
-Each request is JSON-parsed and validated with OpenAPI-derived `Zod.safeParse`. The service records `body_sha256`, `request_ip`, and validation errors in `webhook_events`; whether it retains a parsed `payload` depends on the endpoint and export storage mode. The demo intentionally does **not** persist raw request bodies or headers.
+The single-notification and export routes JSON-parse and validate payloads with OpenAPI-derived `Zod.safeParse`. They record `body_sha256`, `request_ip`, and decoding or validation errors in `webhook_events`; whether they retain a parsed `payload` depends on the endpoint and export storage mode.
+
+The batch route returns `400` for an invalid header or body without creating a receipt. The demo intentionally does **not** persist raw request bodies or headers.
+
+### Batch notifications
+
+`POST /webhooks/classified-notification-batch` accepts only a strict `{ "items": [...] }` body with one to ten complete `Classified` snapshots whose IDs are distinct. It also requires a non-empty `User-Agent`, UUID `X-Immoteur-Service-Id`, `X-Immoteur-Event-Id`, and `X-Immoteur-Delivery-Id` headers, plus a numeric Unix `X-Immoteur-Timestamp` header.
+
+The batch route returns `400` for invalid headers or body, `500` when receipt storage or an item write fails, and `200` only after every item is successfully processed, including equal or older snapshots that are permitted no-ops. Each accepted attempt creates a `webhook_events` row; the demo has no separate durable event-idempotency ledger.
+
+The classified row and its images and price history update together only when the incoming (`meta.lastModifiedAt`, `meta.lastSeenAt`) pair is strictly newer. An equal pair keeps the first stored snapshot, an older pair is a no-op, and receipt time does not decide which source snapshot wins.
 
 ### Export storage mode
 
@@ -201,8 +215,9 @@ To update schemas/types, bump `@immoteur/openapi-zod` in `package.json` and rein
 
 This demo is intentionally limited to classifieds webhooks:
 
-- `classified-notification`
-- `classifieds-export`
+- `classified-notification-single` (with the retained `classified-notification` route)
+- `classified-notification-batch`
+- `classified-export` (with the retained `classifieds-export` route)
 
 To add another webhook:
 
@@ -237,7 +252,7 @@ Metabase should connect directly to Postgres using a read-only user.
 Metabase can query:
 
 - `webhook_events` (ingestion receipts; JSON payloads depend on the selected storage mode and retention settings)
-- `classifieds` (flattened columns for the `classified-notification` payload)
+- `classifieds` (flattened columns for single, batch, and export `Classified` payloads)
 - `classified_images` (one row per image, FK to `classifieds`)
 - `classified_price_history` (one row per price change, FK to `classifieds`)
 

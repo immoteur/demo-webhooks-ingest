@@ -6,6 +6,7 @@ const ENV_PATH = process.env.ENV_PATH ?? '.env';
 const KEYS = {
   notification: 'SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION',
   export: 'SMEE_SOURCE_URL_CLASSIFIEDS_EXPORT',
+  batch: 'SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION_BATCH',
 };
 
 function randomAlphaNum(length) {
@@ -73,7 +74,9 @@ async function main() {
     desired[key] =
       kind === 'notification'
         ? createSmeeUrl('classified-notification')
-        : createSmeeUrl('classifieds-export');
+        : kind === 'batch'
+          ? createSmeeUrl('classified-notification-batch')
+          : createSmeeUrl('classifieds-export');
   }
 
   for (const [key, value] of Object.entries(desired)) {
@@ -90,6 +93,7 @@ async function main() {
 
   console.log('[smee] Relay endpoints:');
   console.log(`- classified-notification: ${desired[KEYS.notification]}`);
+  console.log(`- classified-notification-batch: ${desired[KEYS.batch]}`);
   console.log(`- classifieds-export:      ${desired[KEYS.export]}`);
 }
 

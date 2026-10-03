@@ -1,4 +1,8 @@
-export const WEBHOOK_EVENT_TYPES = ['classified-notification', 'classifieds-export'] as const;
+export const WEBHOOK_EVENT_TYPES = [
+  'classified-notification',
+  'classified-notification-batch',
+  'classifieds-export',
+] as const;
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
 
 export function safeJsonParse(

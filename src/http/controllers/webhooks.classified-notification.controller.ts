@@ -16,42 +16,45 @@ export function createImmoteurClassifiedNotificationWebhookController(): Router 
 
   router.use(express.raw({ type: '*/*', limit: RAW_LIMIT }));
 
-  router.post('/classified-notification', async (req: Request, res: Response) => {
-    const rawBody = toRawBodyString(req.body);
+  router.post(
+    ['/classified-notification', '/classified-notification-single'],
+    async (req: Request, res: Response) => {
+      const rawBody = toRawBodyString(req.body);
 
-    const ingested = await ingestWebhook<Classified>({
-      defaultEventType: 'classified-notification',
-      schema: s_Classified,
-      ip: req.ip,
-      rawBody,
-      persistPayload: true,
-    });
-
-    if (!ingested.ok) {
-      req.log?.error({ err: ingested.error }, 'failed to store webhook event');
-      res.status(500).json({ ok: false });
-      return;
-    }
-
-    const webhookEventId = ingested.webhookEventId;
-    const receivedAt = ingested.receivedAt;
-    if (ingested.parsed && webhookEventId && receivedAt) {
-      const dto = mapClassifiedToUpsertDto({
-        provider: 'immoteur',
-        classified: ingested.parsed,
-        notificationType: ingested.notificationType,
-        webhookEventId,
-        receivedAt,
+      const ingested = await ingestWebhook<Classified>({
+        defaultEventType: 'classified-notification',
+        schema: s_Classified,
+        ip: req.ip,
+        rawBody,
+        persistPayload: true,
       });
 
-      const upsert = await upsertClassified(dto);
-      if (!upsert.ok) {
-        req.log?.error({ err: upsert.error }, 'failed to upsert classifieds row');
+      if (!ingested.ok) {
+        req.log?.error({ err: ingested.error }, 'failed to store webhook event');
+        res.status(500).json({ ok: false });
+        return;
       }
-    }
 
-    res.status(200).json({ ok: true, duplicate: ingested.duplicate });
-  });
+      const webhookEventId = ingested.webhookEventId;
+      const receivedAt = ingested.receivedAt;
+      if (ingested.parsed && webhookEventId && receivedAt) {
+        const dto = mapClassifiedToUpsertDto({
+          provider: 'immoteur',
+          classified: ingested.parsed,
+          notificationType: ingested.notificationType,
+          webhookEventId,
+          receivedAt,
+        });
+
+        const upsert = await upsertClassified(dto);
+        if (!upsert.ok) {
+          req.log?.error({ err: upsert.error }, 'failed to upsert classifieds row');
+        }
+      }
+
+      res.status(200).json({ ok: true, duplicate: ingested.duplicate });
+    },
+  );
 
   return router;
 }

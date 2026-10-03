@@ -40,3 +40,24 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  smee-classified-notification-batch:
+    build:
+      context: .
+    container_name: webhooks_ingest_smee_classified_notification_batch
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      SMEE_SOURCE_URL: ${SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION_BATCH:-}
+      SMEE_TARGET_URL: http://api:3000/webhooks/classified-notification-batch
+    command: node scripts/smee-relay.mjs
+    user: node
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

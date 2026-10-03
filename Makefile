@@ -25,16 +25,16 @@ help:
 	@echo "  db-migrate      Apply migrations"
 	@echo "  db-studio       Open Drizzle Studio"
 	@echo "  stack-up        Start stack (API+Postgres+Metabase)"
-	@echo "  stack-up-smee   Start stack (+2 smee relays)"
+	@echo "  stack-up-smee   Start stack (+3 smee relays)"
 	@echo "  stack-down      Stop stack"
-	@echo "  stack-down-smee Stop stack (+2 smee relays)"
+	@echo "  stack-down-smee Stop stack (+3 smee relays)"
 	@echo "  stack-reset     Stop stack + remove volumes (wipe data)"
-	@echo "  stack-reset-smee Stop stack (+2 smee relays) + remove volumes (wipe data)"
+	@echo "  stack-reset-smee Stop stack (+3 smee relays) + remove volumes (wipe data)"
 	@echo "  reset           Alias for stack-reset"
 	@echo "  reset-smee      Alias for stack-reset-smee"
 	@echo "  metabase-rebootstrap Re-run Metabase bootstrap (dashboard/cards)"
 	@echo "  stack-logs      Tail stack logs"
-	@echo "  stack-logs-smee Tail stack logs (+2 smee relays)"
+	@echo "  stack-logs-smee Tail stack logs (+3 smee relays)"
 
 install:
 	./bin/pnpm install
@@ -74,7 +74,7 @@ check:
 	./bin/pnpm test
 	./bin/pnpm build
 
-demo: ensure-deps .env ## Start stack + two smee relays (no seeding)
+demo: ensure-deps .env ## Start stack + three smee relays (no seeding)
 	@bash scripts/check-prereqs.sh
 	./bin/node scripts/smee-ensure.mjs
 	$(MAKE) stack-up-smee
@@ -126,7 +126,7 @@ stack-up:
 	docker compose up -d --build postgres api metabase db-bootstrap metabase-bootstrap
 
 stack-up-smee:
-	docker compose -f docker-compose.yml -f docker-compose.smee.yml up -d --build postgres api metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classifieds-export
+	docker compose -f docker-compose.yml -f docker-compose.smee.yml up -d --build postgres api metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classified-notification-batch smee-classifieds-export
 
 stack-down:
 	docker compose down
@@ -155,4 +155,4 @@ stack-logs:
 	docker compose logs -f postgres api metabase db-bootstrap metabase-bootstrap
 
 stack-logs-smee:
-	docker compose -f docker-compose.yml -f docker-compose.smee.yml logs -f postgres api metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classifieds-export
+	docker compose -f docker-compose.yml -f docker-compose.smee.yml logs -f postgres api metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classified-notification-batch smee-classifieds-export

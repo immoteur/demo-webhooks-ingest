@@ -6,6 +6,7 @@ import { createHealthController } from './controllers/health.controller.js';
 import { createRootController } from './controllers/root.controller.js';
 import { createImmoteurClassifiedsExportWebhookController } from './controllers/webhooks.classifieds-export.controller.js';
 import { createImmoteurClassifiedNotificationWebhookController } from './controllers/webhooks.classified-notification.controller.js';
+import { createImmoteurClassifiedNotificationBatchWebhookController } from './controllers/webhooks.classified-notification-batch.controller.js';
 import { ipAllowList } from './middleware/ip-allowlist.js';
 
 export type WebhookRouteOptions = {
@@ -22,6 +23,7 @@ export function registerRoutes(app: Express, options?: WebhookRouteOptions): voi
   }
 
   app.use('/webhooks', createImmoteurClassifiedNotificationWebhookController());
+  app.use('/webhooks', createImmoteurClassifiedNotificationBatchWebhookController());
   app.use(
     '/webhooks',
     createImmoteurClassifiedsExportWebhookController(

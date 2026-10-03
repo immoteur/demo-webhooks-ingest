@@ -112,6 +112,7 @@ const METABASE_ADMIN_EMAIL = process.env.METABASE_ADMIN_EMAIL ?? 'demo@example.c
 const METABASE_ADMIN_PASSWORD = process.env.METABASE_ADMIN_PASSWORD ?? 'DemoAdmin!2025ChangeMe';
 
 const SMEE_NOTIFICATION = process.env.SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION ?? '';
+const SMEE_BATCH = process.env.SMEE_SOURCE_URL_CLASSIFIED_NOTIFICATION_BATCH ?? '';
 const SMEE_EXPORT = process.env.SMEE_SOURCE_URL_CLASSIFIEDS_EXPORT ?? '';
 
 console.log(`[demo] Waiting for API at ${API_URL}...`);
@@ -137,4 +138,5 @@ try {
 console.log('');
 console.log('[demo] smee relays (send webhooks here):');
 console.log(`- classified-notification: ${SMEE_NOTIFICATION || '(missing)'}`);
+console.log(`- classified-notification-batch: ${SMEE_BATCH || '(missing)'}`);
 console.log(`- classifieds-export:      ${SMEE_EXPORT || '(missing)'}`);

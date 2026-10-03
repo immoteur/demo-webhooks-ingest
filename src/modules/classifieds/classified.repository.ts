@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, lt, or } from 'drizzle-orm';
 
 import { db } from '../../db/client.js';
 import { classifiedImages, classifiedPriceHistory, classifieds } from '../../db/schema.js';
@@ -9,10 +9,23 @@ export async function upsertClassified(
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   try {
     await db.transaction(async (tx) => {
-      await tx
+      const applied = await tx
         .insert(classifieds)
         .values(dto.classified)
-        .onConflictDoUpdate({ target: classifieds.id, set: dto.classified });
+        .onConflictDoUpdate({
+          target: classifieds.id,
+          set: dto.classified,
+          setWhere: or(
+            lt(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
+            and(
+              eq(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
+              lt(classifieds.metaLastSeenAt, dto.classified.metaLastSeenAt),
+            ),
+          ),
+        })
+        .returning({ id: classifieds.id });
+
+      if (applied.length === 0) return;
 
       const classifiedId = dto.classified.id;
 

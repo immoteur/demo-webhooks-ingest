@@ -4,7 +4,8 @@ import { createHash } from 'node:crypto';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import type { Express } from 'express';
+import express, { type Express } from 'express';
+import pino from 'pino';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -100,6 +101,14 @@ const classifiedNotificationExample: ClassifiedNotificationWebhookPayload = {
   },
 };
 
+const batchHeaders = {
+  'User-Agent': 'Immoteur/test',
+  'X-Immoteur-Service-Id': '00000000-0000-4000-8000-000000000001',
+  'X-Immoteur-Event-Id': '00000000-0000-4000-8000-000000000002',
+  'X-Immoteur-Delivery-Id': '00000000-0000-4000-8000-000000000003',
+  'X-Immoteur-Timestamp': '1757926800',
+};
+
 const classifiedsExportExample: ClassifiedsExport = {
   exportId: '2f9b734d-9c22-46a0-8f20-0d1a2b3c4d5e',
   items: [classifiedNotificationExample],
@@ -124,6 +133,8 @@ describe('webhook ingestion', () => {
   let container: StartedPostgreSqlContainer;
   let app: Express;
   let metadataOnlyApp: Express;
+  let diagnosticApp: Express;
+  const diagnostics: Record<string, unknown>[] = [];
   let db: Db;
   let pool: DbPool;
 
@@ -145,9 +156,22 @@ describe('webhook ingestion', () => {
     const { createApp } = await import('../src/server.js');
     app = createApp();
     metadataOnlyApp = createApp({ classifiedsExportStorageMode: 'metadata-only' });
+    const requestLogger = pino(
+      { level: 'info' },
+      { write: (line) => diagnostics.push(JSON.parse(line) as Record<string, unknown>) },
+    );
+    diagnosticApp = express();
+    diagnosticApp.use((req, _res, next) => {
+      req.log = requestLogger;
+      next();
+    });
+    const { createImmoteurClassifiedNotificationBatchWebhookController } =
+      await import('../src/http/controllers/webhooks.classified-notification-batch.controller.js');
+    diagnosticApp.use('/webhooks', createImmoteurClassifiedNotificationBatchWebhookController());
   });
 
   beforeEach(async () => {
+    diagnostics.length = 0;
     await db.delete(classifieds);
     await db.delete(webhookEvents);
   });
@@ -156,6 +180,430 @@ describe('webhook ingestion', () => {
     await pool.end();
     await container.stop();
   });
+
+  it.each([1, 10])('accepts a batch of %i distinct classifieds', async (count) => {
+    // Given
+    const items = Array.from({ length: count }, (_, index) => ({
+      ...structuredClone(classifiedNotificationExample),
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    }));
+
+    // When
+    const res = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set('User-Agent', 'Immoteur/test')
+      .set('X-Immoteur-Service-Id', '00000000-0000-4000-8000-000000000001')
+      .set('X-Immoteur-Event-Id', '00000000-0000-4000-8000-000000000002')
+      .set('X-Immoteur-Delivery-Id', '00000000-0000-4000-8000-000000000003')
+      .set('X-Immoteur-Timestamp', '1757926800')
+      .send({ items });
+
+    // Then
+    expect(res.status).toBe(200);
+    await expect(db.select().from(classifieds)).resolves.toHaveLength(count);
+    const events = await db.select().from(webhookEvents);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe('classified-notification-batch');
+  });
+
+  it('correlates accepted retries with distinct receipt and delivery IDs in bounded logs', async () => {
+    // Given
+    const secondDeliveryId = '00000000-0000-4000-8000-000000000008';
+    const body = { items: [classifiedNotificationExample] };
+
+    // When
+    const first = await request(diagnosticApp)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send(body);
+    const second = await request(diagnosticApp)
+      .post('/webhooks/classified-notification-batch')
+      .set({ ...batchHeaders, 'X-Immoteur-Delivery-Id': secondDeliveryId })
+      .send(body);
+
+    // Then
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    await expect(db.select().from(classifieds)).resolves.toHaveLength(1);
+    const receipts = await db.select().from(webhookEvents);
+    expect(receipts).toHaveLength(2);
+    expect(diagnostics).toHaveLength(2);
+    expect(new Set(diagnostics.map((entry) => entry.webhookEventId))).toEqual(
+      new Set(receipts.map((receipt) => receipt.id)),
+    );
+    for (const [index, deliveryId] of [
+      batchHeaders['X-Immoteur-Delivery-Id'],
+      secondDeliveryId,
+    ].entries()) {
+      expect(diagnostics[index]).toEqual({
+        level: 30,
+        time: expect.any(Number),
+        pid: process.pid,
+        hostname: expect.any(String),
+        serviceId: batchHeaders['X-Immoteur-Service-Id'],
+        eventId: batchHeaders['X-Immoteur-Event-Id'],
+        deliveryId,
+        webhookEventId: expect.any(String),
+        itemCount: 1,
+        msg: 'processed batch webhook',
+      });
+    }
+  });
+
+  it('keeps the first snapshot when source timestamps are equal', async () => {
+    // Given
+    const changed = structuredClone(classifiedNotificationExample);
+    changed.transaction.price.current = 1;
+    changed.media = { images: [] };
+    await request(app)
+      .post('/webhooks/classified-notification')
+      .send(classifiedNotificationExample);
+    const before = await db.select().from(classifieds);
+
+    // When
+    await request(app).post('/webhooks/classified-notification').send(changed);
+
+    // Then
+    await expect(db.select().from(classifieds)).resolves.toEqual(before);
+    await expect(db.select().from(classifiedImages)).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    { items: [] },
+    {
+      items: Array.from({ length: 11 }, (_, index) => ({
+        ...classifiedNotificationExample,
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      })),
+    },
+    { items: [classifiedNotificationExample, classifiedNotificationExample] },
+    { items: [{}] },
+    { items: [classifiedNotificationExample], exportId: classifiedsExportExample.exportId },
+    '{"items":',
+  ])('rejects invalid batch envelopes without storing business state', async (body) => {
+    // Given
+    const before = await db.select().from(classifieds);
+
+    // When
+    const res = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .set('Content-Type', 'application/json')
+      .send(body);
+
+    // Then
+    expect(res.status).toBe(400);
+    await expect(db.select().from(classifieds)).resolves.toEqual(before);
+    await expect(db.select().from(webhookEvents)).resolves.toHaveLength(0);
+  });
+
+  it.each(Object.keys(batchHeaders))('rejects malformed batch header %s', async (header) => {
+    // Given
+    const headers = { ...batchHeaders, [header]: '' };
+
+    // When
+    const res = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(headers)
+      .send({ items: [classifiedNotificationExample] });
+
+    // Then
+    expect(res.status).toBe(400);
+    await expect(db.select().from(webhookEvents)).resolves.toHaveLength(0);
+  });
+
+  it.each([
+    ['X-Immoteur-Service-Id', 'not-a-uuid'],
+    ['X-Immoteur-Event-Id', 'not-a-uuid'],
+    ['X-Immoteur-Delivery-Id', 'not-a-uuid'],
+    ['X-Immoteur-Timestamp', 'not-a-timestamp'],
+  ])('rejects nonempty invalid batch header %s', async (header, value) => {
+    // Given
+    const headers = { ...batchHeaders, [header]: value };
+
+    // When
+    const response = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(headers)
+      .send({ items: [classifiedNotificationExample] });
+
+    // Then
+    expect(response.status).toBe(400);
+    await expect(db.select().from(webhookEvents)).resolves.toHaveLength(0);
+  });
+
+  it('keeps the newer row and both child tables after an older batch arrives', async () => {
+    // Given
+    const newer = structuredClone(classifiedNotificationExample);
+    newer.meta.lastModifiedAt = '2025-09-16T09:00:00Z';
+    newer.meta.lastSeenAt = '2025-09-16T09:00:00Z';
+    newer.media = {
+      images: [
+        {
+          id: '00000000-0000-4000-8000-000000000004',
+          position: 1,
+          url: 'https://example.com/newer.jpg',
+        },
+      ],
+    };
+    newer.transaction.price.current = 600000;
+    newer.transaction.price.history = [
+      {
+        id: '00000000-0000-4000-8000-000000000005',
+        timestamp: '2025-09-16T09:00:00Z',
+        value: 600000,
+      },
+    ];
+    await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [newer] });
+    const rows = await db.select().from(classifieds);
+    const images = await db.select().from(classifiedImages);
+    const history = await db.select().from(classifiedPriceHistory);
+
+    // When
+    const response = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [classifiedNotificationExample] });
+
+    // Then
+    expect(response.status).toBe(200);
+    await expect(db.select().from(classifieds)).resolves.toEqual(rows);
+    await expect(db.select().from(classifiedImages)).resolves.toEqual(images);
+    await expect(db.select().from(classifiedPriceHistory)).resolves.toEqual(history);
+  });
+
+  it.each(['webhook_events', 'classifieds'])('returns 500 when %s storage fails', async (table) => {
+    // Given
+    await pool.query(`ALTER TABLE ${table} RENAME TO ${table}_unavailable`);
+
+    // When
+    let res;
+    try {
+      res = await request(diagnosticApp)
+        .post('/webhooks/classified-notification-batch')
+        .set(batchHeaders)
+        .send({ items: [classifiedNotificationExample] });
+    } finally {
+      await pool.query(`ALTER TABLE ${table}_unavailable RENAME TO ${table}`);
+    }
+
+    // Then
+    expect(res.status).toBe(500);
+    await expect(db.select().from(classifieds)).resolves.toHaveLength(0);
+    const receipts = await db.select().from(webhookEvents);
+    expect(receipts).toHaveLength(table === 'classifieds' ? 1 : 0);
+    if (table === 'classifieds') {
+      expect(receipts[0]?.eventType).toBe('classified-notification-batch');
+    } else {
+      expect(diagnostics).toHaveLength(1);
+      expect(diagnostics[0]).toEqual({
+        level: 50,
+        time: expect.any(Number),
+        pid: process.pid,
+        hostname: expect.any(String),
+        serviceId: batchHeaders['X-Immoteur-Service-Id'],
+        eventId: batchHeaders['X-Immoteur-Event-Id'],
+        deliveryId: batchHeaders['X-Immoteur-Delivery-Id'],
+        itemCount: 1,
+        errorType: 'Error',
+        causeType: 'error',
+        msg: 'failed to store batch webhook event',
+      });
+    }
+  });
+
+  it('rolls back parent and child changes when a newer price-history insert fails', async () => {
+    // Given
+    await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [classifiedNotificationExample] });
+    const rows = await db.select().from(classifieds);
+    const images = await db.select().from(classifiedImages);
+    const history = await db.select().from(classifiedPriceHistory);
+    const newer = structuredClone(classifiedNotificationExample);
+    newer.meta.lastModifiedAt = '2025-09-16T09:00:00Z';
+    newer.media = { images: [] };
+    newer.transaction.price.current = 600000;
+    newer.transaction.price.history = [
+      {
+        id: '00000000-0000-4000-8000-000000000005',
+        timestamp: '2025-09-16T09:00:00Z',
+        value: 600000,
+      },
+    ];
+    await pool.query(
+      'ALTER TABLE classified_price_history ADD CONSTRAINT test_history_failure CHECK (value <> 600000)',
+    );
+
+    // When
+    let failed;
+    try {
+      failed = await request(app)
+        .post('/webhooks/classified-notification-batch')
+        .set(batchHeaders)
+        .send({ items: [newer] });
+    } finally {
+      await pool.query('ALTER TABLE classified_price_history DROP CONSTRAINT test_history_failure');
+    }
+
+    // Then
+    expect(failed.status).toBe(500);
+    await expect(db.select().from(classifieds)).resolves.toEqual(rows);
+    await expect(db.select().from(classifiedImages)).resolves.toEqual(images);
+    await expect(db.select().from(classifiedPriceHistory)).resolves.toEqual(history);
+    const replayed = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [newer] });
+    expect(replayed.status).toBe(200);
+    expect((await db.select().from(classifieds))[0]?.transactionPriceCurrent).toBe(600000);
+    await expect(db.select().from(classifiedImages)).resolves.toHaveLength(0);
+    expect((await db.select().from(classifiedPriceHistory))[0]?.value).toBe(600000);
+    await expect(db.select().from(webhookEvents)).resolves.toHaveLength(3);
+  });
+
+  it.each([
+    ['192.0.2.10', 200, 1],
+    ['203.0.113.30', 403, 0],
+  ] as const)(
+    'enforces the batch allowlist for proxied source %s',
+    async (sourceIp, status, count) => {
+      // Given
+      const { createApp } = await import('../src/server.js');
+      const restrictedApp = createApp({ webhookAllowedIp: '192.0.2.10' });
+      restrictedApp.set('trust proxy', 1);
+
+      // When
+      const response = await request(restrictedApp)
+        .post('/webhooks/classified-notification-batch')
+        .set(batchHeaders)
+        .set('X-Forwarded-For', sourceIp)
+        .send({ items: [classifiedNotificationExample] });
+
+      // Then
+      expect(response.status).toBe(status);
+      await expect(db.select().from(webhookEvents)).resolves.toHaveLength(count);
+      await expect(db.select().from(classifieds)).resolves.toHaveLength(count);
+    },
+  );
+
+  it('returns 500 for a partial batch and safely replays its successful item', async () => {
+    // Given
+    const rejected = structuredClone(classifiedNotificationExample);
+    rejected.id = '00000000-0000-4000-8000-000000000009';
+    rejected.transaction.price.current = 1;
+    const body = { items: [classifiedNotificationExample, rejected] };
+    await pool.query(
+      'ALTER TABLE classifieds ADD CONSTRAINT test_price_failure CHECK (transaction_price_current <> 1)',
+    );
+
+    // When
+    let failed;
+    try {
+      failed = await request(app)
+        .post('/webhooks/classified-notification-batch')
+        .set(batchHeaders)
+        .send(body);
+    } finally {
+      await pool.query('ALTER TABLE classifieds DROP CONSTRAINT test_price_failure');
+    }
+    const acceptedBefore = await db.select().from(classifieds);
+    const receiptsBefore = await db.select().from(webhookEvents);
+    const replayed = await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send(body);
+
+    // Then
+    expect(failed.status).toBe(500);
+    expect(acceptedBefore).toHaveLength(1);
+    expect(receiptsBefore).toHaveLength(1);
+    expect(receiptsBefore[0]?.eventType).toBe('classified-notification-batch');
+    expect(replayed.status).toBe(200);
+    const acceptedAfter = await db
+      .select()
+      .from(classifieds)
+      .where(eq(classifieds.id, classifiedNotificationExample.id));
+    expect(acceptedAfter).toEqual(acceptedBefore);
+    await expect(db.select().from(classifieds)).resolves.toHaveLength(2);
+    const receiptsAfter = await db.select().from(webhookEvents);
+    expect(receiptsAfter).toHaveLength(2);
+    expect(receiptsAfter.map((receipt) => receipt.eventType)).toEqual([
+      'classified-notification-batch',
+      'classified-notification-batch',
+    ]);
+  });
+
+  it('retains newer business state under concurrent old and new batch attempts', async () => {
+    // Given
+    const newer = structuredClone(classifiedNotificationExample);
+    newer.meta.lastModifiedAt = '2025-09-16T09:00:00Z';
+    newer.transaction.price.current = 600000;
+    newer.media = { images: [] };
+
+    // When
+    const responses = await Promise.all(
+      [newer, classifiedNotificationExample, newer].map((item) =>
+        request(app)
+          .post('/webhooks/classified-notification-batch')
+          .set(batchHeaders)
+          .send({ items: [item] }),
+      ),
+    );
+
+    // Then
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+    const rows = await db.select().from(classifieds);
+    expect(rows[0]?.transactionPriceCurrent).toBe(600000);
+    await expect(db.select().from(classifiedImages)).resolves.toHaveLength(0);
+  });
+
+  it('advances lastSeenAt only when lastModifiedAt is equal', async () => {
+    // Given
+    const newer = structuredClone(classifiedNotificationExample);
+    newer.meta.lastSeenAt = '2025-09-16T09:00:00Z';
+    newer.transaction.price.current = 600000;
+    await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [classifiedNotificationExample] });
+
+    // When
+    await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [newer] });
+    await request(app)
+      .post('/webhooks/classified-notification-batch')
+      .set(batchHeaders)
+      .send({ items: [classifiedNotificationExample] });
+
+    // Then
+    const rows = await db.select().from(classifieds);
+    expect(rows[0]?.transactionPriceCurrent).toBe(600000);
+    expect(rows[0]?.metaLastSeenAt).toEqual(new Date(newer.meta.lastSeenAt));
+  });
+
+  it.each(['/webhooks/classified-notification-single', '/webhooks/classified-export'])(
+    'accepts canonical alias %s without redirecting',
+    async (route) => {
+      // Given
+      const body = route.endsWith('export')
+        ? classifiedsExportExample
+        : classifiedNotificationExample;
+
+      // When
+      const response = await request(app).post(route).send(body);
+
+      // Then
+      expect(response.status).toBe(200);
+      await expect(db.select().from(classifieds)).resolves.toHaveLength(1);
+    },
+  );
 
   it('stores a webhook event row', async () => {
     // Given
