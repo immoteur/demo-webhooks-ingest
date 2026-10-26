@@ -15,6 +15,31 @@ const envSchema = z.object({
   PORT: z.preprocess(emptyStringToUndefined, z.coerce.number().int().positive().default(3000)),
   LOG_LEVEL: z.preprocess(emptyStringToUndefined, z.string().optional()),
   WEBHOOK_ALLOWED_IP: z.preprocess(emptyStringToUndefined, z.string().optional()),
+  DEMO_STORAGE_MODE: z.preprocess(
+    emptyStringToUndefined,
+    z.enum(['sample', 'metadata-only', 'persist']).default('sample'),
+  ),
+  DEMO_DATABASE_MAX_BYTES: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce
+      .number()
+      .int()
+      .min(32 * 1024 * 1024)
+      .default(8 * 1024 * 1024 * 1024),
+  ),
+  DEMO_MIN_FREE_BYTES: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce
+      .number()
+      .int()
+      .nonnegative()
+      .default(20 * 1024 * 1024 * 1024),
+  ),
+  DEMO_CAPACITY_PATH: z.preprocess(emptyStringToUndefined, z.string().default('/capacity')),
+  MAINTENANCE_PORT: z.preprocess(
+    emptyStringToUndefined,
+    z.coerce.number().int().positive().default(3001),
+  ),
   CLASSIFIEDS_EXPORT_STORAGE_MODE: z.preprocess(
     emptyStringToUndefined,
     classifiedsExportStorageModeSchema.default('persist'),
@@ -46,3 +71,5 @@ const envSchema = z.object({
 });
 
 export const env = envSchema.parse(process.env);
+
+export type DemoStorageMode = typeof env.DEMO_STORAGE_MODE;

@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Classified, ClassifiedsExport } from '@immoteur/openapi-zod';
 
 import type * as DbClient from '../src/db/client.js';
+import type * as Storage from '../src/modules/retention/demo-storage.js';
 import {
   classifiedImages,
   classifiedPriceHistory,
@@ -137,6 +138,7 @@ describe('webhook ingestion', () => {
   const diagnostics: Record<string, unknown>[] = [];
   let db: Db;
   let pool: DbPool;
+  let persistentStorage: Storage.DemoStorage;
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer('postgres:16-alpine')
@@ -154,8 +156,21 @@ describe('webhook ingestion', () => {
     await migrate(db, { migrationsFolder: path.join(process.cwd(), 'src', 'db', 'migrations') });
 
     const { createApp } = await import('../src/server.js');
-    app = createApp();
-    metadataOnlyApp = createApp({ classifiedsExportStorageMode: 'metadata-only' });
+    const { DemoStorage } = await import('../src/modules/retention/demo-storage.js');
+    // These cases prove explicit persistence; the default sample contract is tested separately.
+    persistentStorage = new DemoStorage({
+      mode: 'persist',
+      databaseMaxBytes: 8 * 1024 ** 3,
+      minimumFreeBytes: 0,
+      capacityPath: process.cwd(),
+      expectedDatabase: 'webhooks_test',
+    });
+    await persistentStorage.refresh();
+    app = createApp({ storage: persistentStorage });
+    metadataOnlyApp = createApp({
+      storage: persistentStorage,
+      classifiedsExportStorageMode: 'metadata-only',
+    });
     const requestLogger = pino(
       { level: 'info' },
       { write: (line) => diagnostics.push(JSON.parse(line) as Record<string, unknown>) },
@@ -451,7 +466,7 @@ describe('webhook ingestion', () => {
     }
 
     // Then
-    expect(failed.status).toBe(500);
+    expect(failed.status).toBe(503);
     await expect(db.select().from(classifieds)).resolves.toEqual(rows);
     await expect(db.select().from(classifiedImages)).resolves.toEqual(images);
     await expect(db.select().from(classifiedPriceHistory)).resolves.toEqual(history);
@@ -474,7 +489,10 @@ describe('webhook ingestion', () => {
     async (sourceIp, status, count) => {
       // Given
       const { createApp } = await import('../src/server.js');
-      const restrictedApp = createApp({ webhookAllowedIp: '192.0.2.10' });
+      const restrictedApp = createApp({
+        storage: persistentStorage,
+        webhookAllowedIp: '192.0.2.10',
+      });
       restrictedApp.set('trust proxy', 1);
 
       // When
@@ -491,7 +509,7 @@ describe('webhook ingestion', () => {
     },
   );
 
-  it('returns 500 for a partial batch and safely replays its successful item', async () => {
+  it('returns 503 for a partial persistent batch and safely replays its successful item', async () => {
     // Given
     const rejected = structuredClone(classifiedNotificationExample);
     rejected.id = '00000000-0000-4000-8000-000000000009';
@@ -519,7 +537,7 @@ describe('webhook ingestion', () => {
       .send(body);
 
     // Then
-    expect(failed.status).toBe(500);
+    expect(failed.status).toBe(503);
     expect(acceptedBefore).toHaveLength(1);
     expect(receiptsBefore).toHaveLength(1);
     expect(receiptsBefore[0]?.eventType).toBe('classified-notification-batch');
@@ -856,7 +874,7 @@ describe('webhook ingestion', () => {
     await expect(db.select().from(classifieds)).resolves.toHaveLength(0);
   });
 
-  it('metadata-only export returns 500 when receipt storage fails', async () => {
+  it('explicit persistence returns 503 when legacy metadata-only receipt storage fails', async () => {
     // Given
     await pool.query('ALTER TABLE webhook_events RENAME TO webhook_events_unavailable');
 
@@ -872,7 +890,7 @@ describe('webhook ingestion', () => {
     }
 
     // Then
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(res.body).toMatchObject({ ok: false });
     await expect(db.select().from(webhookEvents)).resolves.toHaveLength(0);
     await expect(db.select().from(classifieds)).resolves.toHaveLength(0);
@@ -987,7 +1005,7 @@ describe('webhook ingestion', () => {
   it('rejects requests when webhook IP allowlist does not match', async () => {
     // Given
     const { createApp } = await import('../src/server.js');
-    const blockedApp = createApp({ webhookAllowedIp: '10.0.0.1' });
+    const blockedApp = createApp({ storage: persistentStorage, webhookAllowedIp: '10.0.0.1' });
     const body = { id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', type: 'created' };
 
     // When
@@ -1006,7 +1024,7 @@ describe('webhook ingestion', () => {
   it('accepts requests when webhook IP allowlist matches', async () => {
     // Given
     const { createApp } = await import('../src/server.js');
-    const allowedApp = createApp({ webhookAllowedIp: '127.0.0.1' });
+    const allowedApp = createApp({ storage: persistentStorage, webhookAllowedIp: '127.0.0.1' });
 
     const id = 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff';
     const body = { id, type: 'created' };
@@ -1029,6 +1047,7 @@ describe('webhook ingestion', () => {
     // Given
     const { createApp } = await import('../src/server.js');
     const allowedApp = createApp({
+      storage: persistentStorage,
       webhookAllowedIp: '192.0.2.10, 198.51.100.20',
       classifiedsExportStorageMode: 'metadata-only',
     });

@@ -2,7 +2,7 @@
 
 <!-- immoteur-runtime: node=24 -->
 
-Demo Node.js (TypeScript) webhook ingestion API that persists webhook events to PostgreSQL (Drizzle ORM + managed migrations), optimized for Metabase to read directly from the DB.
+Demo Node.js (TypeScript) webhook receiver for a bounded PostgreSQL and Metabase sample. By default, it validates a webhook and returns an acknowledgement even when the demo cannot store the request.
 
 This repo is a companion project for:
 
@@ -35,15 +35,42 @@ make demo-with-seed
 
 ## Quickstart
 
+For a fresh demo that stores the bounded sample, use Docker Compose:
+
+```bash
+cp .env.example .env
+make stack-up
+```
+
+The API listens on `http://localhost:8080`. Compose mounts the PostgreSQL data
+volume at the verified `/capacity` path used by the bounded storage checks.
+
+### Host hot-reload workflow (development only)
+
+For direct API development, start only PostgreSQL in Compose and run the API on
+the host:
+
 ```bash
 make install
-cp .env.example .env
 make db-up
 make db-migrate
 make dev
 ```
 
-API listens on `http://localhost:3000` (or `PORT` from `.env`).
+`make dev` runs only `src/index.ts`, not the independent `src/maintenance.ts`
+service. The API listens on `http://localhost:3000` (or `PORT` from `.env`), and
+the default `DEMO_CAPACITY_PATH=/capacity` therefore safely acknowledges
+requests with `storage: "skipped"` instead of storing a sample. To enable
+guarded host-side sample writes, explicitly set `DEMO_CAPACITY_PATH` to a
+verified path on the filesystem that contains the actual PostgreSQL data; do not
+substitute the repository or a temporary directory.
+
+That path enables guarded admission only; it does not provide migration
+readiness, the independent cleanup/reset heartbeat, or automatic capacity
+recovery. Use `make stack-up` for the complete supported lifecycle, including
+migration, cleanup and reclamation, and automatic resume. Docker Desktop does
+not expose a host path for its managed volume, so use the Compose stack unless
+you operate PostgreSQL on a verified native data filesystem.
 
 Before running in any shared environment, update the default credentials in
 `.env` (all `CHANGE_ME` values) and avoid exposing Postgres publicly.
@@ -57,13 +84,15 @@ Before running in any shared environment, update the default credentials in
 - `src/modules/webhooks/*`: webhook ingestion + `webhook_events` persistence
 - `src/modules/classifieds/*`: `classifieds` mapping + persistence (incl. images + price history)
 - `src/db/*`: Drizzle schema, migrations, client
+- `src/maintenance.ts`: migrations, cleanup, capacity checks, and sample resets
 
 ## Docker Compose stack (API + Postgres + Metabase + smee)
 
 This starts:
 
 - Postgres (port `${POSTGRES_HOST_PORT:-15432}` on host)
-- API (port `${API_HOST_PORT:-8080}` on host) and runs migrations on startup
+- API (port `${API_HOST_PORT:-8080}` on host) for webhook acknowledgements
+- Maintenance for migrations, cleanup, capacity checks, and guarded sample resets
 - Metabase (port `${METABASE_HOST_PORT:-3001}` on host)
 - Optional smee relays (forwards smee.io → API inside the Compose network)
 
@@ -84,15 +113,113 @@ Defaults:
   - classifieds-export → `http://api:3000/webhooks/classifieds-export`
 - API: `http://localhost:8080`
 - Metabase UI: `http://localhost:3001`
+- Maintenance diagnostics: `http://127.0.0.1:${MAINTENANCE_HOST_PORT:-8081}`
 
 Troubleshooting:
 
 - If `db-bootstrap` exits with code `2`, it couldn’t connect to Postgres (most often: credentials don’t match an existing Docker volume). For a clean demo reset: `make stack-reset-smee` (wipes volumes).
 - If you change `scripts/metabase-bootstrap.mjs` and don’t see dashboard updates, re-run the one-shot bootstrap container: `make metabase-rebootstrap` (or reset volumes for a full clean run).
 
+## Choose a storage mode
+
+`DEMO_STORAGE_MODE` controls storage for single notifications, batches, and
+exports. It defaults to `sample`, which is the recommended mode for a public
+demo.
+
+> [!IMPORTANT]
+> **0.2.0 compatibility change:** `sample` is now the default, replacing the
+> previous persistence-first behavior. An existing installation that depends on
+> durable local data must set `DEMO_STORAGE_MODE=persist` before upgrading.
+
+| Mode            | Request result                                                                | Data retained                                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sample`        | Acknowledges the request, including when bounded storage is unavailable.      | A bounded recent sample of listings and receipt metadata.                                                                                  |
+| `metadata-only` | Acknowledges the request, including when receipt storage is unavailable.      | Bounded receipt metadata only.                                                                                                             |
+| `persist`       | Returns `503` when the database is unavailable before its receipt is written. | Uses the legacy durable receipt and listing flow; the legacy export setting can limit export payloads during the compatibility transition. |
+
+In `sample` and `metadata-only` modes, a successful response includes a
+`storage` field. Its value is `sampled`, `metadata-only`, or `skipped`; a
+`skipped` result includes a reason such as `initializing`, `unavailable`,
+`capacity`, `rate-limit`, `contention`, or `item-limit`.
+
+Those responses also include `storedItems`. It can be `0` even for an
+acknowledgement: metadata-only receipts do not materialize listings, and sample
+mode skips an oversized or otherwise ineligible listing whole rather than
+truncating it.
+
+An acknowledgement confirms that the receiver handled the request. It does not
+guarantee that the demo retained a receipt or listing when `storage` is
+`skipped`.
+
+### Bounded sample lifecycle
+
+```mermaid
+flowchart LR
+  webhook[Validated webhook] --> mode{Storage mode}
+  mode -->|sample| sample[Bounded listings and receipts]
+  mode -->|metadata-only| receipt[Bounded receipt metadata]
+  mode -->|persist| durable[Persist before success]
+  sample --> pressure{Capacity safe?}
+  pressure -->|no| skipped[Acknowledge with storage skipped]
+  pressure -->|yes| maintenance[Maintenance prunes or resets sample]
+```
+
+Sample mode retains at most 1,000 listings from the previous 24 hours and at
+most 1,000 receipt rows from the previous 12 hours. It stores no raw webhook
+JSON and caps stored diagnostic text, so the dashboard is a recent sample rather
+than a durable delivery archive.
+
+The maintenance process checks capacity every five seconds and runs cleanup at
+least once a minute. At the default 8 GiB database budget or 20 GiB free-space
+reserve, sample and metadata-only writes stop; they resume only after the
+database is below its budget and, after the reserve is tripped, the free-space
+probe has more than 24 GiB available.
+
+In sample mode, capacity pressure can reset the disposable ingestion dataset:
+`webhook_events`, `classifieds`, `classified_images`, and
+`classified_price_history`. The reset does not touch Metabase configuration,
+but it permanently removes the sample data and does not guarantee that a
+database file will shrink immediately.
+
+`persist` is an explicit opt-in for installations that need durable local data.
+It returns an error when its capacity check or receipt write fails, and it does
+not run the automatic sample reset.
+
+### Configure capacity
+
+The supplied `.env.example` uses safe defaults:
+
+| Variable                  | Default       | Purpose                                                                        |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| `DEMO_STORAGE_MODE`       | `sample`      | Chooses bounded sampling, metadata-only receipts, or explicit persistence.     |
+| `DEMO_DATABASE_MAX_BYTES` | `8589934592`  | Stops sample writes when the PostgreSQL database reaches 8 GiB.                |
+| `DEMO_MIN_FREE_BYTES`     | `21474836480` | Stops sample writes when the capacity filesystem has 20 GiB or less available. |
+| `DEMO_CAPACITY_PATH`      | `/capacity`   | Compose-only mount of the filesystem checked for available space.              |
+
+Docker Compose mounts the PostgreSQL volume read-only at `/capacity` for the
+API and maintenance services. The `.env.example` value is therefore valid only
+inside those services. For a non-Compose deployment, set
+`DEMO_CAPACITY_PATH` to a verified path on the same filesystem as PostgreSQL
+data; a project directory, a temporary directory, or an inferred Docker Desktop
+volume path is not a substitute.
+
+`CLASSIFIEDS_EXPORT_STORAGE_MODE` is deprecated. It is read only when
+`DEMO_STORAGE_MODE=persist` to preserve the previous export-specific behavior;
+set `DEMO_STORAGE_MODE` explicitly instead. When the legacy variable is set,
+the service logs a deprecation warning.
+
+### Maintenance and migration readiness
+
+Compose starts a separate `maintenance` service from the same image after
+`db-bootstrap` completes. It applies migrations and runs cleanup while the API
+continues to serve acknowledgements. In the default disposable Compose stack,
+its `MAINTENANCE_PORT` is mapped only to
+`127.0.0.1:${MAINTENANCE_HOST_PORT:-8081}` for local soak tests and diagnostics;
+that loopback-only mapping is inherited by the public Caddy Compose overlay.
+
 ## Production (VPS) with Caddy (TLS)
 
-This repo includes a simple Caddy reverse-proxy setup (`docker-compose.caddy.yml` + `docker/caddy/Caddyfile`) to expose **only** `80/443` publicly and keep Postgres/Metabase/API unexposed.
+This repo includes a simple Caddy reverse-proxy setup (`docker-compose.caddy.yml` + `docker/caddy/Caddyfile`) to expose only Caddy's `80/443` ports publicly and keep direct Postgres, Metabase, and API ports unexposed.
 
 1. Create DNS records pointing to your VPS:
    - `API_DOMAIN` (e.g. `api.demo.example.com`)
@@ -101,10 +228,8 @@ This repo includes a simple Caddy reverse-proxy setup (`docker-compose.caddy.yml
    - `POSTGRES_PASSWORD`, `API_DB_PASSWORD`, `METABASE_READER_PASSWORD`, `METABASE_ADMIN_PASSWORD`
    - `ACME_EMAIL`, `API_DOMAIN`, `METABASE_DOMAIN`
    - Optional: `WEBHOOK_ALLOWED_IP` to enable the API's `/webhooks/*` IP allowlist
-   - Optional: `CLASSIFIEDS_EXPORT_STORAGE_MODE` controls `POST /webhooks/classifieds-export` storage. `persist` is the default and stores export payloads and listings for the local demo and Metabase. `metadata-only` validates and acknowledges exports without storing their payloads or materializing listings; see [Export storage mode](#export-storage-mode).
-   - Optional: `WEBHOOK_EVENTS_RETENTION_HOURS` (default `24`) and `CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS` (default `7`) for hourly retention cleanup
-   - Optional: `WEBHOOK_EVENTS_MAX_ROWS` and `CLASSIFIEDS_MAX_ROWS` (default `0`, disabled) to retain only the newest rows. Webhook-event cleanup only removes rows that are no longer referenced by a listing.
-   - Optional: `WEBHOOK_PAYLOAD_RETENTION_MAX_BYTES` (default `8589934592`, 8 GiB) is the logical byte budget for retained webhook JSON payloads. The scheduled cleanup clears older stored payloads when the budget is exceeded; it does not guarantee a physical PostgreSQL or filesystem size.
+   - Set `DEMO_STORAGE_MODE` explicitly after choosing the contract in [Choose a storage mode](#choose-a-storage-mode).
+   - Optional: change the capacity values only after measuring the PostgreSQL data filesystem and confirming that the new reserve still protects the host.
 3. Start the production stack:
 
 ```bash
@@ -120,6 +245,9 @@ Notes:
 
 - In production mode, the API enables Express `trust proxy` (1 hop). Caddy overwrites `X-Forwarded-For`/`X-Real-IP` so client IPs can’t be spoofed.
 - Optional: set `METABASE_PUBLIC_DASHBOARD_UUID` to enable a stable pretty URL `https://$METABASE_DOMAIN/demo` → `https://$METABASE_DOMAIN/public/dashboard/<uuid>`.
+- Caddy blocks `/ready` and `/metrics` from its public routes, including case
+  and trailing-slash variants. The loopback maintenance mapping remains
+  available for local diagnostics.
 
 ## Webhook endpoints
 
@@ -131,7 +259,7 @@ This service exposes these webhook endpoints:
 | Batch notifications    | `POST /webhooks/classified-notification-batch`  | —                                        |
 | Exports                | `POST /webhooks/classified-export`              | `POST /webhooks/classifieds-export`      |
 
-The single-notification and export routes JSON-parse and validate payloads with OpenAPI-derived `Zod.safeParse`. They record `body_sha256`, `request_ip`, and decoding or validation errors in `webhook_events`; whether they retain a parsed `payload` depends on the endpoint and export storage mode.
+The single-notification and export routes JSON-parse and validate payloads with OpenAPI-derived `Zod.safeParse`. Successful responses use the storage contract above, so `200` means the receiver handled the request but may not mean the demo retained it.
 
 The batch route returns `400` for an invalid header or body without creating a receipt. The demo intentionally does **not** persist raw request bodies or headers.
 
@@ -139,25 +267,11 @@ The batch route returns `400` for an invalid header or body without creating a r
 
 `POST /webhooks/classified-notification-batch` accepts only a strict `{ "items": [...] }` body with one to ten complete `Classified` snapshots whose IDs are distinct. It also requires a non-empty `User-Agent`, UUID `X-Immoteur-Service-Id`, `X-Immoteur-Event-Id`, and `X-Immoteur-Delivery-Id` headers, plus a numeric Unix `X-Immoteur-Timestamp` header.
 
-The batch route returns `400` for invalid headers or body, `500` when receipt storage or an item write fails, and `200` only after every item is successfully processed, including equal or older snapshots that are permitted no-ops. Each accepted attempt creates a `webhook_events` row; the demo has no separate durable event-idempotency ledger.
+The batch route returns `400` for invalid headers or body. In `sample` and
+`metadata-only` modes, a valid batch returns `200` with its storage outcome;
+in `persist` mode, a storage failure returns `503`.
 
 The classified row and its images and price history update together only when the incoming (`meta.lastModifiedAt`, `meta.lastSeenAt`) pair is strictly newer. An equal pair keeps the first stored snapshot, an older pair is a no-op, and receipt time does not decide which source snapshot wins.
-
-### Export storage mode
-
-`CLASSIFIEDS_EXPORT_STORAGE_MODE` applies only to `POST /webhooks/classifieds-export`:
-
-- `persist` is the default. It stores a parsed export payload in `webhook_events` and materializes its listings, images, and price history. Keep this mode for the local demo when you want Metabase to query export data.
-- `metadata-only` is for receivers that need to accept exports without retaining their contents. The endpoint still applies the IP allowlist when configured, parses JSON, validates the payload against the OpenAPI-derived schema, calculates `body_sha256`, and stores a receipt with request metadata or a validation error. It returns the same HTTP response behavior as `persist` mode, but stores no export `payload` and writes no `classifieds`, `classified_images`, or `classified_price_history` rows.
-
-Use `metadata-only` for a hosted sink when you need delivery receipts without building a local listings dataset. The default remains `persist`, so cloning the project and running the local demo continues to populate Metabase.
-
-The existing retention variables are complementary safeguards:
-
-- `WEBHOOK_EVENTS_RETENTION_HOURS` removes old unreferenced webhook-event receipts.
-- `WEBHOOK_EVENTS_MAX_ROWS` retains only the newest unreferenced webhook-event receipts when set above `0`.
-- `WEBHOOK_PAYLOAD_RETENTION_MAX_BYTES` clears older stored JSON payloads to the configured logical byte budget. It does not reserve disk space, limit the size of a write before it is accepted, or guarantee PostgreSQL's physical disk usage.
-- `CLASSIFIEDS_LAST_SEEN_RETENTION_DAYS` and `CLASSIFIEDS_MAX_ROWS` control cleanup of materialized listings in `persist` mode.
 
 ### IP allowlist
 
@@ -201,7 +315,10 @@ If you’re running the API directly (no Docker), use `http://localhost:3000` in
 - Generate migration: `make db-generate NAME=create_table_...` (or omit `NAME` for Drizzle defaults)
 - Apply migrations: `make db-migrate`
 
-`make db-migrate` is safe to run on a clean DB.
+`make db-migrate` applies the migration journal to a local development database.
+Docker Compose assigns migration readiness to the internal maintenance service,
+so the webhook API can acknowledge valid sample-mode requests while PostgreSQL
+is restarting.
 
 Migrations live in `src/db/migrations/`.
 
@@ -251,8 +368,8 @@ Metabase should connect directly to Postgres using a read-only user.
 
 Metabase can query:
 
-- `webhook_events` (ingestion receipts; JSON payloads depend on the selected storage mode and retention settings)
-- `classifieds` (flattened columns for single, batch, and export `Classified` payloads)
+- `webhook_events` (bounded ingestion receipts; sample and metadata-only modes keep no raw payload JSON)
+- `classifieds` (a bounded recent sample of flattened `Classified` listing snapshots)
 - `classified_images` (one row per image, FK to `classifieds`)
 - `classified_price_history` (one row per price change, FK to `classifieds`)
 

@@ -7,6 +7,7 @@ import type { ClassifiedsExportStorageMode } from '../../env.js';
 import { mapClassifiedToUpsertDto } from '../mappers/classified.mapper.js';
 import { upsertClassifieds } from '../../modules/classifieds/classified.repository.js';
 import { ingestWebhook } from '../../modules/webhooks/webhook-ingest.service.js';
+import type { DemoStorage } from '../../modules/retention/demo-storage.js';
 
 const RAW_LIMIT = '10mb';
 
@@ -14,6 +15,7 @@ type ClassifiedsExport = z.infer<typeof s_ClassifiedsExport>;
 
 export function createImmoteurClassifiedsExportWebhookController(
   storageMode: ClassifiedsExportStorageMode = 'persist',
+  storage?: DemoStorage,
 ): Router {
   const router = Router();
 
@@ -30,11 +32,13 @@ export function createImmoteurClassifiedsExportWebhookController(
         ip: req.ip,
         rawBody,
         persistPayload: storageMode === 'persist',
+        storage,
+        selectItems: (parsed) => parsed.items,
       });
 
       if (!ingested.ok) {
         req.log?.error({ err: ingested.error }, 'failed to store webhook event');
-        res.status(500).json({ ok: false });
+        res.status(ingested.statusCode ?? 500).json({ ok: false });
         return;
       }
 
@@ -54,6 +58,8 @@ export function createImmoteurClassifiedsExportWebhookController(
         const upsertMany = await upsertClassifieds(dtos);
         if (!upsertMany.ok) {
           req.log?.error({ err: upsertMany.error }, 'failed to upsert classifieds rows');
+          res.status(503).json({ ok: false });
+          return;
         } else {
           for (const failure of upsertMany.failures) {
             req.log?.error(
@@ -61,10 +67,14 @@ export function createImmoteurClassifiedsExportWebhookController(
               'failed to upsert classifieds row',
             );
           }
+          if (upsertMany.failures.length > 0) {
+            res.status(503).json({ ok: false });
+            return;
+          }
         }
       }
 
-      res.status(200).json({ ok: true, duplicate: ingested.duplicate });
+      res.status(200).json({ ok: true, duplicate: ingested.duplicate, ...ingested.storage });
     },
   );
 

@@ -1,5 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { pinoHttp } from 'pino-http';
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 
 import { registerRoutes, type WebhookRouteOptions } from './http/routes.js';
 import { logger } from './logger.js';
@@ -14,6 +16,12 @@ export function createApp(options?: WebhookRouteOptions): Express {
   app.use(
     pinoHttp({
       logger,
+      genReqId: (req, res) => {
+        const supplied = z.uuid().safeParse(req.headers['x-request-id']);
+        const id = supplied.success ? supplied.data : randomUUID();
+        res.setHeader('X-Request-ID', id);
+        return id;
+      },
       redact: {
         paths: ['req.headers.authorization', 'req.headers.cookie'],
         remove: true,

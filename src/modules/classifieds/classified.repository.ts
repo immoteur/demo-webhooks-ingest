@@ -4,47 +4,50 @@ import { db } from '../../db/client.js';
 import { classifiedImages, classifiedPriceHistory, classifieds } from '../../db/schema.js';
 import type { ClassifiedUpsertDto } from './classified.dto.js';
 
+type WriteConnection = Pick<typeof db, 'insert' | 'delete'>;
+
+export async function writeClassifieds(
+  tx: WriteConnection,
+  dtos: ClassifiedUpsertDto[],
+): Promise<void> {
+  for (const dto of dtos) await writeClassified(tx, dto);
+}
+
+async function writeClassified(tx: WriteConnection, dto: ClassifiedUpsertDto): Promise<void> {
+  const applied = await tx
+    .insert(classifieds)
+    .values(dto.classified)
+    .onConflictDoUpdate({
+      target: classifieds.id,
+      set: dto.classified,
+      setWhere: or(
+        lt(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
+        and(
+          eq(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
+          lt(classifieds.metaLastSeenAt, dto.classified.metaLastSeenAt),
+        ),
+      ),
+    })
+    .returning({ id: classifieds.id });
+  if (applied.length === 0) return;
+  const classifiedId = dto.classified.id;
+  await tx.delete(classifiedImages).where(eq(classifiedImages.classifiedId, classifiedId));
+  if (dto.images.length > 0)
+    await tx.insert(classifiedImages).values(dto.images.map((img) => ({ ...img, classifiedId })));
+  await tx
+    .delete(classifiedPriceHistory)
+    .where(eq(classifiedPriceHistory.classifiedId, classifiedId));
+  if (dto.priceHistory.length > 0)
+    await tx
+      .insert(classifiedPriceHistory)
+      .values(dto.priceHistory.map((entry) => ({ ...entry, classifiedId })));
+}
+
 export async function upsertClassified(
   dto: ClassifiedUpsertDto,
 ): Promise<{ ok: true } | { ok: false; error: unknown }> {
   try {
-    await db.transaction(async (tx) => {
-      const applied = await tx
-        .insert(classifieds)
-        .values(dto.classified)
-        .onConflictDoUpdate({
-          target: classifieds.id,
-          set: dto.classified,
-          setWhere: or(
-            lt(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
-            and(
-              eq(classifieds.metaLastModifiedAt, dto.classified.metaLastModifiedAt),
-              lt(classifieds.metaLastSeenAt, dto.classified.metaLastSeenAt),
-            ),
-          ),
-        })
-        .returning({ id: classifieds.id });
-
-      if (applied.length === 0) return;
-
-      const classifiedId = dto.classified.id;
-
-      await tx.delete(classifiedImages).where(eq(classifiedImages.classifiedId, classifiedId));
-      if (dto.images.length > 0) {
-        await tx
-          .insert(classifiedImages)
-          .values(dto.images.map((img) => ({ ...img, classifiedId })));
-      }
-
-      await tx
-        .delete(classifiedPriceHistory)
-        .where(eq(classifiedPriceHistory.classifiedId, classifiedId));
-      if (dto.priceHistory.length > 0) {
-        await tx
-          .insert(classifiedPriceHistory)
-          .values(dto.priceHistory.map((entry) => ({ ...entry, classifiedId })));
-      }
-    });
+    await db.transaction((tx) => writeClassifieds(tx, [dto]));
 
     return { ok: true };
   } catch (error) {
