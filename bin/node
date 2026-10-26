@@ -2,4 +2,13 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-exec "${root}/scripts/runtime/node-tool.sh" "${root}/demo/services/webhooks-ingest-demo" node "$@"
+if [[ -f "${root}/scripts/runtime/node-tool.sh" ]]; then
+  exec "${root}/scripts/runtime/node-tool.sh" "${root}/demo/services/webhooks-ingest-demo" node "$@"
+fi
+
+runtime="$(command -v node)"
+if [[ "$("${runtime}" --version)" != v24.* ]]; then
+  echo "This demo requires Node.js 24." >&2
+  exit 1
+fi
+exec "${runtime}" "$@"

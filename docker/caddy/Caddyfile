@@ -3,6 +3,8 @@
 }
 
 {$API_DOMAIN} {
+	@internal path_regexp internal (?i)^/(metrics|ready)(/|$)
+	respond @internal "Forbidden" 403
 	reverse_proxy api:3000 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}

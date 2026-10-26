@@ -1,4 +1,4 @@
-.PHONY: help install ensure-deps dev build start lint format format-check test test-watch check demo demo-with-seed \
+.PHONY: help install ensure-deps dev build start lint format format-check cs-fix cs-check test test-watch check demo demo-with-seed \
 	db-up db-down db-logs db-migrate db-generate db-studio \
 	stack-up stack-up-smee stack-down stack-down-smee stack-reset stack-reset-smee reset reset-smee \
 	metabase-rebootstrap stack-logs stack-logs-smee
@@ -13,6 +13,8 @@ help:
 	@echo "  lint            Run ESLint"
 	@echo "  format          Run Prettier (write)"
 	@echo "  format-check    Run Prettier (check)"
+	@echo "  cs-fix          Format managed sources"
+	@echo "  cs-check        Check managed source formatting"
 	@echo "  test            Run Vitest"
 	@echo "  test-watch      Run Vitest (watch)"
 	@echo "  check           Run all local checks"
@@ -61,6 +63,10 @@ format: ensure-deps
 
 format-check: ensure-deps
 	./bin/pnpm format:check
+
+cs-fix: format
+
+cs-check: format-check
 
 test: ensure-deps
 	./bin/pnpm test
@@ -123,10 +129,10 @@ db-studio: ensure-deps
 	./bin/pnpm db:studio
 
 stack-up:
-	docker compose up -d --build postgres api metabase db-bootstrap metabase-bootstrap
+	docker compose up -d --build postgres api maintenance metabase db-bootstrap metabase-bootstrap
 
 stack-up-smee:
-	docker compose -f docker-compose.yml -f docker-compose.smee.yml up -d --build postgres api metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classified-notification-batch smee-classifieds-export
+	docker compose -f docker-compose.yml -f docker-compose.smee.yml up -d --build postgres api maintenance metabase db-bootstrap metabase-bootstrap smee-classified-notification smee-classified-notification-batch smee-classifieds-export
 
 stack-down:
 	docker compose down

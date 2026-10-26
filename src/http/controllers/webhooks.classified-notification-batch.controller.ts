@@ -6,6 +6,7 @@ import { mapClassifiedToUpsertDto } from '../mappers/classified.mapper.js';
 import { upsertClassifieds } from '../../modules/classifieds/classified.repository.js';
 import { ingestWebhook } from '../../modules/webhooks/webhook-ingest.service.js';
 import { safeJsonParse } from '../../modules/webhooks/webhook.utils.js';
+import type { DemoStorage } from '../../modules/retention/demo-storage.js';
 
 const batchSchema = z
   .strictObject({
@@ -21,7 +22,9 @@ const headersSchema = z.object({
   userAgent: z.string().trim().min(1),
 });
 
-export function createImmoteurClassifiedNotificationBatchWebhookController(): Router {
+export function createImmoteurClassifiedNotificationBatchWebhookController(
+  storage?: DemoStorage,
+): Router {
   const router = Router();
   router.use(express.raw({ type: '*/*', limit: '10mb' }));
   router.post('/classified-notification-batch', async (req, res) => {
@@ -51,7 +54,13 @@ export function createImmoteurClassifiedNotificationBatchWebhookController(): Ro
       ip: req.ip,
       persistPayload: true,
       schema: batchSchema,
+      storage,
+      selectItems: (parsed) => parsed.items,
     });
+    if (ingested.ok && ingested.storage) {
+      res.status(200).json({ ok: true, duplicate: false, ...ingested.storage });
+      return;
+    }
     if (!ingested.ok || !ingested.webhookEventId || !ingested.receivedAt) {
       const error = ingested.ok ? null : ingested.error;
       req.log?.error(
@@ -68,7 +77,7 @@ export function createImmoteurClassifiedNotificationBatchWebhookController(): Ro
         },
         'failed to store batch webhook event',
       );
-      res.status(500).json({ ok: false });
+      res.status(ingested.ok ? 500 : (ingested.statusCode ?? 500)).json({ ok: false });
       return;
     }
 
@@ -90,7 +99,7 @@ export function createImmoteurClassifiedNotificationBatchWebhookController(): Ro
         { ...correlation, itemCount: body.data.items.length },
         'failed to persist batch',
       );
-      res.status(500).json({ ok: false });
+      res.status(storage ? 503 : 500).json({ ok: false });
       return;
     }
     req.log?.info(

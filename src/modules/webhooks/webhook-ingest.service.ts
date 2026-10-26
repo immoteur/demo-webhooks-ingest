@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+import type { Classified } from '@immoteur/openapi-zod';
+import type { DemoStorage, StorageOutcome } from '../retention/demo-storage.js';
+
 import { storeWebhookEvent } from './webhook-event.repository.js';
 import { extractNotificationType, safeJsonParse, type WebhookEventType } from './webhook.utils.js';
 
@@ -8,6 +11,8 @@ export async function ingestWebhook<TParsed>(input: {
   rawBody: string;
   ip: string | undefined;
   persistPayload: boolean;
+  storage?: DemoStorage;
+  selectItems?: (parsed: TParsed) => readonly Classified[];
   schema: {
     safeParse: (input: unknown) => { success: boolean; data?: unknown; error?: unknown };
   };
@@ -19,8 +24,9 @@ export async function ingestWebhook<TParsed>(input: {
       receivedAt: Date | null;
       parsed: TParsed | null;
       notificationType: string | null;
+      storage?: StorageOutcome;
     }
-  | { ok: false; error: unknown }
+  | { ok: false; error: unknown; statusCode?: number }
 > {
   const jsonResult = safeJsonParse(input.rawBody);
   const bodySha256 = createHash('sha256').update(input.rawBody, 'utf8').digest('hex');
@@ -37,9 +43,7 @@ export async function ingestWebhook<TParsed>(input: {
     payload = jsonResult.data;
     const schemaResult = input.schema.safeParse(jsonResult.data);
     if (!schemaResult.success) {
-      error = input.persistPayload
-        ? `schema_invalid: ${String(schemaResult.error)}`
-        : 'schema_invalid';
+      error = input.persistPayload ? 'schema_invalid: validation failed' : 'schema_invalid';
     } else {
       parsed = schemaResult.data as TParsed;
     }
@@ -50,15 +54,38 @@ export async function ingestWebhook<TParsed>(input: {
     }
   }
 
+  if (input.storage && input.storage.mode !== 'persist') {
+    const storage = await input.storage.record({
+      ip: input.ip,
+      eventType: input.defaultEventType,
+      rawBody: input.rawBody,
+      items: parsed && input.selectItems ? input.selectItems(parsed) : [],
+      notificationType,
+      error: error ? (jsonResult.success ? 'schema_invalid' : 'invalid_json') : null,
+    });
+    return {
+      ok: true,
+      duplicate: false,
+      webhookEventId: null,
+      receivedAt: null,
+      parsed,
+      notificationType,
+      storage,
+    };
+  }
+  if (input.storage && !(await input.storage.canPersist())) {
+    return { ok: false, error: new Error('StorageUnavailable'), statusCode: 503 };
+  }
+
   const result = await storeWebhookEvent({
     eventType: input.defaultEventType,
     requestIp: input.ip ?? null,
     payload: input.persistPayload ? payload : null,
     bodySha256,
-    error,
+    error: error?.slice(0, 256) ?? null,
   });
 
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: result.error, statusCode: input.storage ? 503 : 500 };
 
   return {
     ok: true,

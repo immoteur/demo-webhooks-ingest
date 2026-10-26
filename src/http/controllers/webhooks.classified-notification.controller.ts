@@ -6,12 +6,15 @@ import { Classified as s_Classified } from '@immoteur/openapi-zod';
 import { mapClassifiedToUpsertDto } from '../mappers/classified.mapper.js';
 import { upsertClassified } from '../../modules/classifieds/classified.repository.js';
 import { ingestWebhook } from '../../modules/webhooks/webhook-ingest.service.js';
+import type { DemoStorage } from '../../modules/retention/demo-storage.js';
 
 const RAW_LIMIT = '10mb';
 
 type Classified = z.infer<typeof s_Classified>;
 
-export function createImmoteurClassifiedNotificationWebhookController(): Router {
+export function createImmoteurClassifiedNotificationWebhookController(
+  storage?: DemoStorage,
+): Router {
   const router = Router();
 
   router.use(express.raw({ type: '*/*', limit: RAW_LIMIT }));
@@ -27,11 +30,13 @@ export function createImmoteurClassifiedNotificationWebhookController(): Router 
         ip: req.ip,
         rawBody,
         persistPayload: true,
+        storage,
+        selectItems: (parsed) => [parsed],
       });
 
       if (!ingested.ok) {
         req.log?.error({ err: ingested.error }, 'failed to store webhook event');
-        res.status(500).json({ ok: false });
+        res.status(ingested.statusCode ?? 500).json({ ok: false });
         return;
       }
 
@@ -49,10 +54,12 @@ export function createImmoteurClassifiedNotificationWebhookController(): Router 
         const upsert = await upsertClassified(dto);
         if (!upsert.ok) {
           req.log?.error({ err: upsert.error }, 'failed to upsert classifieds row');
+          res.status(503).json({ ok: false });
+          return;
         }
       }
 
-      res.status(200).json({ ok: true, duplicate: ingested.duplicate });
+      res.status(200).json({ ok: true, duplicate: ingested.duplicate, ...ingested.storage });
     },
   );
 
