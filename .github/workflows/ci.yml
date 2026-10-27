@@ -5,7 +5,34 @@ on:
     branches: ['**']
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Reject runtime environment files
+        run: |
+          tracked_env_files="$(git ls-files -- ':(glob)**/.env' ':(glob)**/.env.*' ':(exclude).env.example')"
+          if [[ -n "$tracked_env_files" ]]; then
+            echo 'Runtime environment files must not be tracked.' >&2
+            exit 1
+          fi
+
+      - name: Scan Git history for secrets
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD:/repo:ro" --entrypoint /bin/sh \
+            zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            -euc 'git -C /repo rev-parse --verify HEAD > /dev/null; exec gitleaks git /repo --log-opts=--all --redact=100 --no-banner --exit-code 1'
+
   test:
     runs-on: ubuntu-latest
     steps:
